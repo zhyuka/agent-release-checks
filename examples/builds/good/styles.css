@@ -1,0 +1,16 @@
+:root {
+  --ink: #1f2933;
+  --accent: #2f6f4f;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  color: var(--ink);
+  max-width: 40rem;
+  margin: 0 auto;
+}
+
+button {
+  background: var(--accent);
+  color: white;
+}
