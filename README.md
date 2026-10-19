@@ -2,58 +2,107 @@
 
 [![tests](https://github.com/zhyuka/agent-release-checks/actions/workflows/tests.yml/badge.svg)](https://github.com/zhyuka/agent-release-checks/actions/workflows/tests.yml)
 
-## What this is
+Two Claude Code hooks for projects where agents write and review code.
 
-Three release checks for software that coding agents build. One refuses to score a build that has nothing in it. One shows whether a reviewer agent wrote files. One accepts "QA passed" only with evidence that QA ran on the final build. You can run them as a demo with stub agents, as a command on your own build or run log, or as a Claude Code plugin whose hooks enforce two of them while agents work. I only trust a check after it catches a planted bad case and passes a known-good one, so each check here ships with both. Plain Python, no dependencies, tested on Python 3.9 to 3.13.
+- A reviewer can't write files. When an agent your config names as a reviewer calls Edit or Write, or runs a shell command that writes, such as `sed -i`, `rm` or a `>` redirect, the hook denies the call and tells the agent to put the change in its review.
+- A builder can't stop early. If it edited files after its last passing QA command, the stop hook sends it back to run QA. A QA run piped into `tail` or ended with `|| true` doesn't count, because its exit code is hidden.
 
-## Where this comes from
+<!-- TODO: demo GIF at docs/demo.gif, 10 to 20 seconds: a reviewer's sed -i is denied, then a builder's stop is blocked until npm run check passes. Add it here as a Markdown image once the file exists. -->
 
-In my work at Accenture, coding agents built web pages behind automated quality gates. A reviewer agent had to stay read-only. A builder agent had to run its QA step before it said it was done. A person approved every release. Each check here comes from a way that model failed:
-
-- A rule-based scorer ranked an empty build above real ones, because most of its rules only look for problems.
-- 3 of 91 reviewer-agent runs that were told to be read-only edited code anyway.
-- A cheaper model skipped the QA step in all 33 benchmark runs and reported success anyway.
-
-The original system is internal and none of it is in this repo. This is a fresh reimplementation of its release checks. In the demo, each "agent" is a small deterministic Python function that stands in for a model. No LLM calls, no network. The Claude Code plugin is new too, and applies the same checks to real sessions through hooks.
-
-The two counts above, 3 of 91 and 33 of 33, come from the original runs. Every number the demo prints comes from the stubs and the four example builds. The demo runs 91 and 33 times to match the original runs, and its 2 of 91 comes from a seeded edit rate, not from a model.
-
-## Use it as a Claude Code plugin
-
-The repo is a Claude Code plugin and a marketplace that lists it. In a Claude Code session:
+Install from a Claude Code session:
 
 ```
-/plugin marketplace add zhyuka/agent-release-checks
-/plugin install agent-release-checks@zhyuka
+/plugin install agent-release-checks --marketplace zhyuka/agent-release-checks
 ```
 
-From a shell, the same two steps are `claude plugin marketplace add zhyuka/agent-release-checks` and `claude plugin install agent-release-checks@zhyuka`. The hooks run `python3`, so Python 3.9 or later has to be on your PATH.
+Then run `/agent-release-checks:setup` to choose your QA command. It needs Python 3.9 or later and nothing else. It has no dependencies and makes no network calls.
 
-### Configure it
+## Install
 
-The hooks read `.claude/release-checks.json` in your project:
+Each of these adds the `zhyuka` marketplace and installs the plugin for your user:
 
-```json
-{
-  "reviewer_agents": ["*reviewer*"],
-  "reviewer_shell": "block-writes",
-  "builder_agents": ["main", "page-builder"],
-  "qa_commands": ["npm run check"]
-}
-```
-
-| Field | Default | What it does |
+| Where | Command | Claude Code |
 | --- | --- | --- |
-| `reviewer_agents` | `["*reviewer*"]` | Agents that may not write files |
-| `reviewer_shell` | `"block-writes"` | `block-writes` denies shell commands that write files. `block-all` denies every shell command |
-| `builder_agents` | `["*builder*"]` | Agents that have to pass QA after their last edit before they stop |
-| `qa_commands` | `[]` | Commands that count as the QA step. The QA hook stays off until you list one |
+| In a session | `/plugin install agent-release-checks --marketplace zhyuka/agent-release-checks` | 2.1.275 or later |
+| In a shell | `claude plugin install agent-release-checks --marketplace zhyuka/agent-release-checks` | 2.1.292 or later |
+| Either, on an older version | `/plugin marketplace add zhyuka/agent-release-checks`, then `/plugin install agent-release-checks@zhyuka` | |
+
+The hooks need Claude Code 2.1.69 or later, the first version that tells hooks which subagent is acting. They also need Python 3.9 or later as `python3` or `python`, or as `py -3` on Windows. Git Bash is optional on Windows.
+
+### What happens on first run
+
+1. Hooks load when a session starts. After the install, start a new session or run `/reload-plugins`.
+2. The session opens with one line from the plugin: `release-checks is on. Reviewers (*reviewer*) can't write files. The QA check is off until you set a QA command: run /agent-release-checks:setup.` It shows once per project, and again when the settings change.
+3. From then on, an agent whose name matches `*reviewer*` can't write files. The QA check stays off until the project names a QA command, so nothing else changes until you run the setup skill.
+
+An install in a session can show the plugin's options with their defaults filled in. Keep them or change them; [Configure it](#configure-it) says what each one does.
+
+## Examples
+
+1. Keep a reviewer read-only. Ask: "Use the code-reviewer agent to review build/app.js and list what to fix." If the reviewer tries `sed -i` on the file, Claude Code cancels the call and tells it to put the change in its review instead.
+2. Make "done" mean QA passed. With `"builder_agents": ["main"]` and `"qa_commands": ["npm run check"]` in `.claude/release-checks.json`, ask: "Fix the failing test in src/cart.js and tell me when it's done." If Claude edits, runs `npm run check | tail -5` and tries to stop, the hook sends it back to run `npm run check` on its own. It can stop once that passes after its last edit.
+3. Check a finished build. In a clone of this repo, run `/agent-release-checks:release-check examples/runs/cheap-builder`. It prints pass, fail or skip for each check. Here "step ran" fails because `npm run check` never ran, and the command exits 1.
+
+## Configure it
+
+Every setting is optional. There are three places to set them.
+
+- **The setup skill.** `/agent-release-checks:setup` finds the project's check command in `package.json`, a `Makefile`, pytest, tox, Cargo or Go, asks which agents are builders and reviewers, and writes `.claude/release-checks.json` once you confirm.
+- **The project file.** `.claude/release-checks.json` holds the settings for one project, and you can commit it for your team:
+
+  ```json
+  {
+    "reviewer_agents": ["*reviewer*"],
+    "reviewer_shell": "block-writes",
+    "builder_agents": ["main", "page-builder"],
+    "qa_commands": ["npm run check"]
+  }
+  ```
+
+- **Plugin options.** These are yours, for every project. Set them with `/plugin configure agent-release-checks@zhyuka` or in `/config` in a session, or from a shell with `--config builder_agents=main` on `claude plugin install`. Claude Code 2.1.285 or later also has `claude plugin configure agent-release-checks@zhyuka --values-stdin`. Lists are names separated by commas.
+
+| Setting | Default | What it does | Where |
+| --- | --- | --- | --- |
+| `reviewer_agents` | `*reviewer*` | Agents that may not write files | File or option |
+| `reviewer_shell` | `block-writes` | `block-writes` denies shell commands that write files. `block-all` denies every shell command | File or option |
+| `builder_agents` | `*builder*` | Agents that have to pass QA after their last edit before they stop | File or option |
+| `qa_commands` | none | Commands that count as the QA step. The QA check stays off until you list one | File only, since a QA command belongs to a project |
+| `session_status` | `once` | The line at session start. `once` shows it the first time in a project and when it changes, `always` in every session, `off` never | Option only |
+
+A field in the project file wins over the option, and an option wins over the default.
 
 The hooks tell agents apart by the `agent_type` field that Claude Code puts in each hook input. For a custom subagent that is the `name` in its frontmatter. For a plugin's subagent it is `plugin-name:agent-name`, and for a session started with `--agent` it is that agent's name. Patterns are shell-style globs, matched without case. `main` stands for the main session when it runs without `--agent`.
 
-With no config file the defaults apply. A file with bad JSON, an unknown field or a wrong type also falls back to the defaults, and every hook answer then carries a warning that names the problem.
+A project file with bad JSON, an unknown field or a wrong type makes the hooks fall back to the defaults, and every hook answer then carries a warning that names the problem. A bad option value is ignored and named in the line at session start.
 
-### What each hook blocks
+## Turn it off
+
+- In one project, for you: `claude plugin disable agent-release-checks@zhyuka --scope local`. For everyone on the project: `--scope project`.
+- Everywhere: `/plugin disable agent-release-checks@zhyuka` in a session, or `claude plugin disable agent-release-checks@zhyuka`. `claude plugin uninstall agent-release-checks@zhyuka` removes it.
+- One check only: leave `qa_commands` out of the project file to turn off the QA check, or set `"reviewer_agents": []` to turn off the reviewer check.
+- The line at session start: set the `session_status` option to `off`. Problems still show.
+
+## Troubleshooting
+
+**"release-checks is off: it needs Python 3.9 or later, and none ran."** The hooks found no Python that could run them, so they let every call through and say so once per session. They try `python3` and then `python`, and on Windows `py -3`, `python` and `python3`. Install Python 3.9 or later, or set `RELEASE_CHECKS_PYTHON` to its full path in the `env` block of your Claude Code settings. On Windows, a `python` or `python3` that opens the Microsoft Store is an app execution alias, not Python, and the hooks move past it. On macOS without the command line tools, `/usr/bin/python3` only offers to install them, and the hooks skip it.
+
+**Nothing happens, and `/hooks` says "Only hooks from managed settings run here".** Your organization set `allowManagedHooksOnly` in its managed settings. Claude Code then runs no plugin hooks, these included, unless the managed settings force-enable the plugin. To run these hooks, an admin has to register the `zhyuka` marketplace under `extraKnownMarketplaces` and set `"agent-release-checks@zhyuka": true` under `enabledPlugins`, both in the managed settings. The skills and the `release-checks check` command work either way.
+
+**Windows without Git Bash.** Claude Code runs hook commands in PowerShell there. Each command in `hooks/hooks.json` has two lines. sh runs the first and never reads the second. PowerShell skips the first, since `exec` isn't a PowerShell command, and runs the second, which finds Python the same way. Since Claude Code 2.1.299, a PreToolUse hook that fails there blocks the call, so the hooks exit 0 in every case and set `"onFailure": "continue"`.
+
+**A warning on every call that names `.claude/release-checks.json`.** The file has a mistake, and the hooks use the defaults until you fix it. Run `/agent-release-checks:setup` to rewrite it.
+
+**See what a hook did.** Start Claude Code with `claude --debug` and read `~/.claude/debug/<session-id>.txt`, which has each hook's output and errors.
+
+## What it reads, runs and sends
+
+- The reviewer hook reads the tool call Claude Code is about to make and the project's `.claude/release-checks.json`. It runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls.
+- The QA hook reads the session transcript file that Claude Code passes to Stop and SubagentStop hooks, to find which tool calls ran and whether the QA command passed. It reads tool calls only and keeps nothing. It doesn't run the QA command itself.
+- The line at session start reads the same settings. To show only once per project, it writes an empty marker file under the plugin's data folder in `~/.claude/plugins/data/`. When no Python is found, the hooks write an empty marker file in the temp folder so the warning shows once per session.
+- Each hook runs `sh`, or PowerShell on Windows without Git Bash, to find Python, and then runs this plugin's scripts with it. Nothing else runs, and nothing leaves the machine.
+- A hook acts only on the agents your settings name. Every other agent is left alone.
+
+## What each hook blocks
 
 `hooks/reviewer_readonly.py` runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls. When the acting agent is a reviewer, it denies:
 
@@ -62,20 +111,18 @@ With no config file the defaults apply. A file with bad JSON, an unknown field o
 - every PowerShell command, because the hook can't parse PowerShell
 - spawning a subagent that is not a reviewer, since it could write on the reviewer's behalf
 
+For every agent, a write to `.claude/release-checks.json` asks you first, so an agent can't quietly switch the checks off. Approve it when the change is yours, such as the one the setup skill makes.
+
 `hooks/qa_before_done.py` runs on Stop and SubagentStop. When the agent is a builder, it reads the session transcript, or the subagent's own transcript, and blocks the stop if the agent wrote files after the last QA command that passed. A QA run doesn't count when a pipe, `|| true`, a later command or a background run hid its exit code. A builder that wrote nothing can stop.
 
-Both hooks leave every other agent alone.
-
-### What a block looks like
-
-The test fixtures are hook inputs shaped like the examples in Claude Code's hooks reference. Run these from the repo root. In the first, a `code-reviewer` subagent tries `sed -i 's/console.log(.*);//' build/app.js`:
+Both hooks leave every other agent alone. In this example, run from the repo root, a `code-reviewer` subagent tries `sed -i 's/console.log(.*);//' build/app.js`:
 
 ```
 $ python3 hooks/reviewer_readonly.py < tests/fixtures/hooks/deny-reviewer-bash-write.json
 {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "release-checks blocked this Bash call: it runs sed -i. The project config lists code-reviewer as a reviewer, and reviewers are read-only. Put the change you would make in your review instead."}}
 ```
 
-Claude Code cancels the call and gives the reason to the agent. In the second, the main session is a builder. It edited a page, ran `npm run check 2>&1 | tail -5`, and is about to report that QA passed:
+Claude Code cancels the call and gives the reason to the agent. In the next one, the main session is a builder. It edited a page, ran `npm run check 2>&1 | tail -5`, and is about to report that QA passed:
 
 ```
 $ python3 hooks/qa_before_done.py < tests/fixtures/hooks/block-main-qa-piped.json
@@ -84,9 +131,25 @@ $ python3 hooks/qa_before_done.py < tests/fixtures/hooks/block-main-qa-piped.jso
 
 Claude Code keeps the agent working and hands it the reason as its next instruction.
 
-The plugin also adds a `/agent-release-checks:release-check` skill that runs `release-checks check` on a folder and reports each result.
+## How this compares
 
-## Use it on your own build
+- [Superpowers](https://github.com/obra/superpowers) has a `verification-before-completion` skill that asks the agent to check its work before it says it's done. This plugin's stop hook refuses the stop when the agent didn't. The two work together.
+- [TDD Guard](https://github.com/nizos/tdd-guard) is a PreToolUse hook that blocks code written before a failing test, with a model judging each change. This plugin makes no model calls, and it checks that QA passed after the last edit rather than test-first order.
+- [CC Safety Net](https://github.com/kenryu42/cc-safety-net) blocks destructive git and file commands for every agent. This plugin blocks every write, but only for the agents you name as reviewers, and leaves builders free.
+- In a subagent's frontmatter, `tools` or `disallowedTools` can take the write tools away from an agent you wrote. This plugin also covers agents you didn't write, such as other plugins' agents, and lets a reviewer keep a shell for reading.
+
+## Limitations
+
+- The read-only hook reads the command line, not what programs do. `python -c`, a script or a `make` target can write files without the hook seeing it. For a strict reviewer, set `reviewer_shell` to `block-all`, or leave write tools out of the subagent's `tools` list. The hook is the backstop for agents that have them.
+- The QA hook trusts the QA command's exit code. A QA command that checks nothing will pass. Point `qa_commands` at something that refuses empty builds, such as `release-checks check build`.
+- The QA hook counts Edit and Write calls and recognizable shell writes as edits. A build step like `npm run build` writes files without counting as one.
+- Claude Code documents where the transcript is, not its format. The QA hook reads the format Claude Code writes today. If it finds nothing it can read, it lets the agent stop and shows a warning that the check did not run. Claude Code also writes the transcript asynchronously, so a QA result from just before a stop can be missing, and the hook then blocks once.
+- Claude Code ends a turn after stop hooks block eight times in a row, but the count starts over each time the agent calls a tool. So the cap never releases a builder that keeps re-running a failing QA command. It stops when QA passes, when you press Esc, or at its turn limit. To let it stop sooner, press Esc, or take the command out of `qa_commands`.
+- The plugin fails open. When no Python runs it or a hook crashes, the call goes through and you see a warning. Failing closed would block every agent's writes whenever Python is missing, so the plugin doesn't set `"onFailure": "block"`.
+- Plugin options are per user. Claude Code doesn't read them from a project's settings, which is why a QA command can only go in the project file.
+- The build scorer reads static HTML, CSS and JS only. Any other build comes out UNSCORABLE.
+
+## Use the checks without Claude Code
 
 ```
 pip install git+https://github.com/zhyuka/agent-release-checks
@@ -129,42 +192,29 @@ Release checks for examples/runs/cheap-builder
   2 of 3 checks ran: 1 passed, 1 failed.
 ```
 
+## Where this comes from
+
+In my work at Accenture, coding agents built web pages behind automated quality gates. A reviewer agent had to stay read-only. A builder agent had to run its QA step before it said it was done. A person approved every release. Each check here comes from a way that model failed:
+
+- A rule-based scorer ranked an empty build above real ones, because most of its rules only look for problems.
+- 3 of 91 reviewer-agent runs that were told to be read-only edited code anyway.
+- A cheaper model skipped the QA step in all 33 benchmark runs and reported success anyway.
+
+The original system is internal and none of it is in this repo. This is a fresh reimplementation of its release checks, and the plugin is new. The two counts above, 3 of 91 and 33 of 33, come from the original runs.
+
 ## The three failures, as a demo
 
 ```
 git clone https://github.com/zhyuka/agent-release-checks
 cd agent-release-checks
 python -m release_checks demo
-python -m unittest discover -s tests
 ```
 
-The demo reads the example builds in the clone, and exits non-zero if any check fails calibration.
+The demo runs each check with stub agents: small deterministic Python functions that stand in for a model, with no LLM calls and no network. It reads the example builds in the clone, and exits non-zero if any check fails calibration. Every number it prints comes from the stubs and the four example builds. It runs 91 and 33 times to match the original runs, and its 2 of 91 comes from a seeded edit rate, not from a model.
 
-### 1. An empty build passes most rules
-
-Most of the scorer's rules said "the build did not do X", and a build with no code never does X.
-
-`release_checks/vacuous.py` scores a static web build against eight such rules, including hex colors, image alt text and heading order. The naive score is the share of rules passed. In the demo the empty build scores 0.88, above the mediocre build at 0.62 and the broken one at 0.25. All 8 rules inspected 0 items. Seven passed because they only look for problems and found none. The eighth, "a `<main>` landmark exists", is the only rule that asks for something to be there, so it fails, and 7 of 8 is 0.88.
-
-`guarded_score()` refuses to score a build with no visible HTML text, and says why. `examples/builds/` holds the empty folder and three small sites. See demo part 1, or run `python -m unittest tests.test_vacuous`.
-
-### 2. A read-only reviewer edits code
-
-In the original runs the rule was in the prompt, and nothing enforced it.
-
-`release_checks/readonly.py` runs a reviewer on fresh copies of a workspace and hashes every file before and after. It flags any run that edited, added or deleted a file. The stub reviewer's prompt says not to write, and in a small seeded share of runs it writes anyway. The fix gives the same reviewer a tool layer whose write raises an error. An instruction is not a permission. The plugin's PreToolUse hook does the same in Claude Code. The reviewer keeps its prompt, and the hook takes away the write.
-
-See demo part 2, or run `python -m unittest tests.test_readonly`.
-
-### 3. A step reports success without running
-
-`release_checks/step_ran.py` accepts "QA passed" only with evidence. The QA report has to name the SHA-256 of the exact build it checked, and it can't be older than that build. One stub agent runs QA and writes the report. The cheaper stub just says it passed. The verifier rejects the second in every run and accepts the first.
-
-See demo part 3, or run `python -m unittest tests.test_step_ran`.
-
-### Demo output
-
-Counts in parts 2 and 3 come from seeded stubs, not the original runs.
+1. **An empty build passes most rules.** `release_checks/vacuous.py` scores a static web build against eight rules, such as hex colors, image alt text and heading order. Seven of them only look for problems, so the empty build passes them and scores 0.88, above the mediocre build at 0.62 and the broken one at 0.25. `guarded_score()` refuses to score a build with no visible HTML text, and says why.
+2. **A read-only reviewer edits code.** `release_checks/readonly.py` runs a stub reviewer on fresh copies of a workspace and hashes every file before and after. Its prompt says not to write, and in a small seeded share of runs it writes anyway. Giving the same reviewer a tool layer whose write raises an error stops it. An instruction is not a permission, and the plugin's PreToolUse hook applies the same idea in Claude Code.
+3. **A step reports success without running.** `release_checks/step_ran.py` accepts "QA passed" only when the QA report names the SHA-256 of the exact build it checked and is not older than that build. The verifier rejects the stub that only says it passed, in every run, and accepts the one that ran QA.
 
 ```
 1. Vacuous pass: naive score vs guarded score
@@ -197,26 +247,16 @@ Counts in parts 2 and 3 come from seeded stubs, not the original runs.
   3 of 3 checks passed calibration.
 ```
 
-## How the checks are calibrated
+## Testing
 
-A check counts only after it catches a planted bad case and passes a known-good one. Each one reports counts, not a verdict.
+A check counts only after it catches a planted bad case and passes a known-good one. Each one reports counts, not a verdict. Run the tests with `python -m unittest discover -s tests`.
 
 - `release_checks/calibrate.py` plants one bad case and one good case for each demo check, and demo part 4 prints the result. The tests show that a check which never objects, or always objects, fails calibration.
 - `tests/test_check.py` calibrates `release-checks check` on the four runs in `examples/runs/`. CI also runs the command on them, and fails if a good run doesn't pass or a bad run doesn't fail.
-- Each hook fixture's name starts with the answer it should get: deny, block or allow. `tests/test_hooks.py` pipes every fixture through its hook script, and fails unless each hook both blocks and allows something across the set.
+- Each hook fixture's name starts with the answer it should get, such as deny, block or allow. `tests/test_hooks.py` pipes every fixture through its hook script, and fails unless each hook both blocks and allows something across the set.
+- `tests/test_launcher.py` runs every command in `hooks/hooks.json` on every fixture, from a plugin folder with spaces in its path, in each shell it finds: sh, dash and bash, Git Bash, pwsh and Windows PowerShell. It also checks that a Store alias or an old Python is skipped, and that with no Python the call goes through with one warning per session. CI runs it on Ubuntu, macOS and Windows.
 - `tests/test_readonly.py` lists shell commands that write files and commands that don't. The classifier has to catch every one of the first and pass every one of the second.
-
-## Limitations
-
-- The read-only hook reads the command line, not what programs do. `python -c`, a script or a `make` target can write files without the hook seeing it. For a strict reviewer, set `reviewer_shell` to `block-all`, or leave write tools out of the subagent's `tools` list. The hook is the backstop for agents that have them.
-- The QA hook trusts the QA command's exit code. A QA command that checks nothing will pass. Point `qa_commands` at something that refuses empty builds, such as `release-checks check build`.
-- The QA hook counts Edit and Write calls and recognizable shell writes as edits. A build step like `npm run build` writes files without counting as one.
-- Claude Code documents where the transcript is, not its format. The QA hook reads the format Claude Code writes today. If it finds nothing it can read, it lets the agent stop and shows a warning that the check did not run. Claude Code also writes the transcript asynchronously, so a QA result from just before a stop can be missing, and the hook then blocks once.
-- Claude Code ends a turn after stop hooks block eight times in a row. `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` raises that cap. A builder that never runs QA can still stop once it is reached, and each refusal stays in the transcript.
-- If `python3` is missing or a hook script crashes, Claude Code treats that as a non-blocking error and lets the call through. Setting `onFailure` to `block` would fail closed, but it needs Claude Code v2.1.295 or later and would block every agent's writes whenever Python is missing, so the plugin leaves it unset.
-- Managed settings with `allowManagedHooksOnly` turn off plugin hooks, these included, unless the organization force-enables the plugin.
-- The build scorer reads static HTML, CSS and JS only. Any other build comes out UNSCORABLE.
-- The hook tests feed recorded inputs to the scripts. They don't start Claude Code.
+- These tests feed recorded inputs to the scripts and don't start Claude Code. `evals/` runs with and without the plugin through `claude plugin eval`, and `.github/workflows/live.yml` runs it in CI when the `ANTHROPIC_API_KEY` secret is set.
 
 ## License
 
