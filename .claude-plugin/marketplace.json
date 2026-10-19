@@ -9,8 +9,11 @@
     {
       "name": "agent-release-checks",
       "source": "./",
+      "version": "0.3.0",
       "description": "Hooks that keep reviewer agents read-only and keep a builder from stopping until its QA command passes after its last edit.",
-      "category": "code-quality"
+      "category": "code-quality",
+      "tags": ["hooks", "code-review", "qa", "subagents", "verification"],
+      "homepage": "https://github.com/zhyuka/agent-release-checks"
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "name": "agent-release-checks",
   "displayName": "Agent release checks",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Hooks that keep reviewer agents read-only and keep a builder from stopping until its QA command passes after its last edit.",
   "author": {
     "name": "Derek Zhou",
@@ -9,6 +9,34 @@
   },
   "homepage": "https://github.com/zhyuka/agent-release-checks",
   "repository": "https://github.com/zhyuka/agent-release-checks",
+  "documentationUrl": "https://github.com/zhyuka/agent-release-checks#readme",
+  "supportUrl": "https://github.com/zhyuka/agent-release-checks/issues",
   "license": "MIT",
-  "keywords": ["hooks", "code-review", "qa", "release", "subagents"]
+  "keywords": ["hooks", "code-review", "qa", "release", "subagents", "claude-code-hooks", "reviewer", "stop-hook", "verification"],
+  "userConfig": {
+    "reviewer_agents": {
+      "type": "string",
+      "title": "Reviewer agents",
+      "description": "Agents that may not write files, as name patterns separated by commas, such as *reviewer*, code-reviewer. A project's .claude/release-checks.json overrides this.",
+      "default": "*reviewer*"
+    },
+    "reviewer_shell": {
+      "type": "string",
+      "title": "Reviewer shell commands",
+      "description": "block-writes denies the shell commands that write files. block-all denies every shell command a reviewer runs.",
+      "default": "block-writes"
+    },
+    "builder_agents": {
+      "type": "string",
+      "title": "Builder agents",
+      "description": "Agents that must pass the project's QA command after their last edit before they stop, as name patterns separated by commas. Write main for the main session. Each project sets its QA command in .claude/release-checks.json: run /agent-release-checks:setup.",
+      "default": "*builder*"
+    },
+    "session_status": {
+      "type": "string",
+      "title": "Status line at session start",
+      "description": "once shows what the plugin will block the first time a session starts in a project, and again when that changes. always shows it in every session. off shows only problems.",
+      "default": "once"
+    }
+  }
 }

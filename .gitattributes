@@ -1,2 +1,4 @@
 # Example builds are hashed byte for byte (examples/runs/reviewer-read-only/run.json).
 examples/** -text
+# sh rejects CRLF, and Git for Windows checks files out with CRLF by default.
+*.sh text eol=lf
