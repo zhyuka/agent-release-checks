@@ -266,6 +266,24 @@ class ProjectScopeTest(TempDir):
             path = self.transcript(lines(*self.bash(command), *DONE))
             self.assertEqual(self.outcome(stop_event(path)), expected, command)
 
+    def test_inline_python_writes_are_placed(self):
+        # The literal target of an inline Python write is placed like a shell redirect: a write
+        # in the project blocks, one in temp or home does not, and a target it cannot place blocks.
+        for command, expected in (
+                ("python3 -c \"open('build/x','w')\"", "block"),
+                ("python3 -c \"open('/tmp/x','w')\"", "allow"),
+                ("python3 -c \"import pathlib; pathlib.Path('/tmp/d').mkdir()\"", "allow"),
+                ("python3 -c \"import os; os.remove(os.path.join(os.getcwd(),'f'))\"", "block"),
+                ("python3 -c \"import shutil; shutil.move('build/a','/tmp/b')\"", "block"),
+                ("python3 -c \"import json; json.dump({}, open('/tmp/a.json','w'))\"", "allow"),
+                ("python3 -c \"import os; os.symlink('build/a','/tmp/l')\"", "allow"),
+                ("python3 -c \"import tempfile; tempfile.NamedTemporaryFile()\"", "allow"),
+                ("python3 -c \"import subprocess; subprocess.run(cmd)\"", "block"),
+                ("python3 -c \"import subprocess; subprocess.run(['ls'])\"", "allow"),
+                ("python3 -c \"open(target,'w')\"", "block")):
+            path = self.transcript(lines(*self.bash(command), *DONE))
+            self.assertEqual(self.outcome(stop_event(path)), expected, command)
+
 
 class PowerShellTest(unittest.TestCase):
     def test_writes_are_read_from_cmdlets_redirects_and_programs(self):

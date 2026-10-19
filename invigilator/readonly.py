@@ -366,7 +366,8 @@ class _Checker:
         if not reason or self.touches is None or isinstance(reason, _Inner):
             return reason
         if isinstance(self.touches, _InScope):
-            return _Inner(self.hit(reason, *_landing(name, args, dict(self.vars, **(env or {})), self.cwd)))
+            return _Inner(self.hit(reason, *_landing(name, args, dict(self.vars, **(env or {})),
+                                                     self.cwd, self.touches.links)))
         # Mark it checked, so a wrapper such as sudo or xargs does not check it again on its own words.
         return _Inner(self.hit(reason, *self.narrow(name, args, words, before)))
 
@@ -379,7 +380,7 @@ def command_writes(command, scope=None, _depth=0, _variables=None, _touches=None
     watched path.
     """
     if scope is not None:
-        _touches, _cwd = _InScope(scope.counts), scope.cwd or os.getcwd()
+        _touches, _cwd = _InScope(scope.counts, scope.links), scope.cwd or os.getcwd()
     unsure = ""
     if _depth > MAX_DEPTH:
         unsure = "nests commands too deeply to check"
@@ -447,13 +448,16 @@ FOLD_CASE = sys.platform == "darwin" or os.name == "nt"
 @dataclass(frozen=True)
 class Scope:
     """Which writes count. counts(path) decides for each place a write lands: a resolved
-    path, or None when the check can't tell where it lands. Relative paths start at cwd."""
+    path, or None when the check can't tell where it lands. Relative paths start at cwd.
+    links is True when making a link to a path counts as touching that path, as the reviewer
+    check needs but the Stop hook does not: a move changes its source, but a link does not."""
     counts: object
     cwd: str = ""
+    links: bool = False
 
     def at(self, cwd):
         """The same scope with relative paths starting at cwd, when cwd is given."""
-        return Scope(self.counts, cwd) if cwd and isinstance(cwd, str) else self
+        return Scope(self.counts, cwd, self.links) if cwd and isinstance(cwd, str) else self
 
 
 def _windows(path):
@@ -554,16 +558,19 @@ def project_scope(project, cwd=""):
 
 def reviewer_scope(project, cwd=""):
     """A reviewer's scope: every write counts except one that lands in a temp folder outside
-    the project. A write where the check can't tell counts."""
+    the project. A write where the check can't tell counts. A link to a path counts as touching
+    it, since the reviewer could write through the link."""
     roots = _roots(project)
-    return Scope(lambda path: path is None or not roots or _inside(path, roots) or not in_temp(path), cwd)
+    return Scope(lambda path: path is None or not roots or _inside(path, roots) or not in_temp(path),
+                 cwd, links=True)
 
 
 class _InScope:
     """touches() for a Scope: whether one place a write lands counts."""
 
-    def __init__(self, counts):
+    def __init__(self, counts, links=False):
         self.counts = counts
+        self.links = links
 
     def __call__(self, text, cwd):
         if text.startswith("-") and "=" in text:
@@ -592,13 +599,14 @@ def _links(name, args):
     return name in ("cp", "gcp") and (_short(args, "ls") or bool({"--link", "--symbolic-link"} & set(args)))
 
 
-def _landing(name, args, env=None, cwd=None):
+def _landing(name, args, env=None, cwd=None, links=False):
     """Where a write by this program lands, as path texts. UNKNOWN stands for a place the
     command line does not show, such as what a build step or a package install writes.
 
-    A path the write can reach counts too: the source of a link, the source a move or an
-    archiver removes, and the git dir, work tree, index and working folder of a git write.
-    env holds the command's own VAR=value words, for GIT_DIR and the like; cwd is where it runs."""
+    A path the write can reach counts too: the source a move or an archiver removes, the git
+    dir, work tree, index and working folder of a git write, and, when links is set, the source
+    a link is made to. env holds the command's own VAR=value words, for GIT_DIR and the like;
+    cwd is where it runs."""
     positional = _positionals(args)
     handler = HANDLERS.get(name)
     if name in PATH_ARGUMENTS:
@@ -610,15 +618,19 @@ def _landing(name, args, env=None, cwd=None):
         dest = target[0] if target else (positional[-1] if positional else "")
         sources = positional if target else positional[:-1]
         landed = [dest] + [os.path.join(dest, os.path.basename(s.rstrip("/"))) for s in sources if dest]
-        # mv and rsync --remove-source-files take the source away; cp -l/-s leaves it reachable
-        # through the link. Either way a write to the copy, or the move, changes the source.
-        takes_source = name in ("mv", "gmv") or _links(name, args) \
-            or (name == "rsync" and "--remove-source-files" in args)
+        # mv and rsync --remove-source-files take the source away, so it changes. cp -l/-s only
+        # makes a link, which does not change the source, so it counts just for the reviewer.
+        takes_source = name in ("mv", "gmv") or (name == "rsync" and "--remove-source-files" in args) \
+            or (links and _links(name, args))
         return landed + (sources if takes_source else [])
     if name in ("ln", "gln", "link"):
-        # The link and its source both count: a hard link shares the source's bytes, and a
-        # write through a symlink lands on the source.
-        return _values(args, "t", ("--target-directory",)) + positional
+        # The link location always counts. Its source changes only through a later write, so it
+        # counts just for the reviewer.
+        target = _values(args, "t", ("--target-directory",))
+        if target:
+            return target + (positional if links else [])
+        link_loc = positional[-1:] if len(positional) >= 2 else positional
+        return link_loc + (positional[:-1] if links and len(positional) >= 2 else [])
     if name == "dd":
         return [a[3:] for a in args if a.startswith("of=")]
     if name in ("sort", "gsort"):
@@ -1361,6 +1373,59 @@ def _py_command(node, consts, aliases):
     return None
 
 
+PY_PATH_WRAPPERS = {"os.path.expanduser", "os.path.abspath", "os.path.normpath", "os.path.realpath",
+                    "os.path.expandvars", "os.fspath", "str"}
+PY_PATH_CTORS = {"Path", "PurePath", "PosixPath", "WindowsPath", "PurePosixPath", "PureWindowsPath"}
+
+
+def _py_path(node, consts, aliases, cwd, depth=0):
+    """A path a write names, as a text, or None when it is built from something this check
+    cannot read. Only string literals, their concatenation, f-strings whose parts resolve,
+    os.path.join, a Path(...) or Path / part join, os.path.expanduser/abspath/normpath and the
+    call's own folder (os.getcwd(), Path.cwd()) are read; anything else gives None."""
+    if depth > 8 or node is None:
+        return None
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.Name):
+        return _py_path(consts[node.id], consts, aliases, cwd, depth + 1) if node.id in consts else None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
+        left = _py_path(node.left, consts, aliases, cwd, depth + 1)
+        right = _py_path(node.right, consts, aliases, cwd, depth + 1)
+        if left is None or right is None:
+            return None
+        return left + right if isinstance(node.op, ast.Add) else os.path.join(left, right)
+    if isinstance(node, ast.JoinedStr):
+        parts = [_py_path(v.value if isinstance(v, ast.FormattedValue) else v, consts, aliases, cwd, depth + 1)
+                 for v in node.values]
+        return "".join(parts) if all(p is not None for p in parts) else None
+    if isinstance(node, ast.Call):
+        dotted = _py_dotted(node.func, aliases, consts)
+        base = dotted.rsplit(".", 1)[-1]
+        if dotted in ("os.getcwd", "os.getcwdb") or base == "cwd":
+            return cwd or None
+        if dotted == "os.path.join" or base in PY_PATH_CTORS:
+            parts = [_py_path(a, consts, aliases, cwd, depth + 1) for a in node.args]
+            return os.path.join(*parts) if parts and all(p is not None for p in parts) else None
+        if (dotted in PY_PATH_WRAPPERS or base == "resolve") and node.args:
+            return _py_path(node.args[0], consts, aliases, cwd, depth + 1)
+    return None
+
+
+def _scoped(c, reason, targets, link_sources=()):
+    """For a scope check on an inline write: the reason when one target lands where the scope
+    counts, or cannot be placed (None in targets, or no target at all); else "". Without a scope,
+    or for a touch check, the reason passes through unchanged. link_sources count only for a
+    scope that follows links (the reviewer), since making a link does not change its source."""
+    if not reason or not isinstance(c.touches, _InScope):
+        return reason
+    places = list(targets) + (list(link_sources) if c.touches.links else [])
+    for t in (places or [None]):
+        if t is None or c.touches(t, c.cwd):
+            return reason
+    return ""
+
+
 def _python_call(node, aliases, consts, c, sqlite):
     func, args = node.func, node.args
     dotted = _py_dotted(func, aliases, consts)
@@ -1368,6 +1433,14 @@ def _python_call(node, aliases, consts, c, sqlite):
     module_style = isinstance(func, ast.Name) or (
         isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id in aliases)
     kw = {k.arg: k.value for k in node.keywords if k.arg}
+
+    def P(n):
+        return _py_path(n, consts, aliases, c.cwd)
+
+    def arg(i):
+        return args[i] if i < len(args) else None
+
+    unreadable = "runs code this check cannot read, so it may write"
     if dotted in PY_RUNS or dotted.startswith(("os.exec", "os.spawn", "os.posix_spawn")):
         if dotted.startswith(("os.exec", "os.spawn", "os.posix_spawn")) or dotted.endswith("_exec"):
             parts = []
@@ -1380,68 +1453,102 @@ def _python_call(node, aliases, consts, c, sqlite):
             command = " ".join(shlex.quote(p) for p in parts[1:] or parts) if parts else None
         else:
             command = _py_command(args[0] if args else kw.get("args") or kw.get("cmd"), consts, aliases)
-        return c.nested(command, f"run by {dotted}") if command else ""
+        # A subprocess whose command this check can read is placed like any shell command; one it
+        # cannot read may write anywhere, so for a scope check it counts.
+        if command:
+            return c.nested(command, f"run by {dotted}")
+        return unreadable if isinstance(c.touches, _InScope) else ""
     if dotted in ("exec", "eval", "compile") and args:
         code = _py_const(args[0], consts)
-        return _python_writes(code, c) if code else ""
+        if code:
+            return _python_writes(code, c)
+        return unreadable if isinstance(c.touches, _InScope) else ""
     if dotted == "os.open":
         flags = args[1] if len(args) > 1 else kw.get("flags")
         names = {getattr(n, "attr", None) or getattr(n, "id", "") for n in ast.walk(flags)} \
             if flags else set()
-        return "opens a file for writing" if names & {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC",
-                                                      "O_APPEND"} else ""
+        if names & {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"}:
+            return _scoped(c, "opens a file for writing", [P(arg(0))])
+        return ""
     if dotted in ("shelve.open", "dbm.open", "dbm.gnu.open", "dbm.ndbm.open", "dbm.dumb.open"):
         flag = args[1] if len(args) > 1 else kw.get("flag")
         read_only = flag is not None and _py_const(flag, consts) == "r"
-        return "" if read_only else "opens a database file for writing"
+        return "" if read_only else _scoped(c, "opens a database file for writing", [P(arg(0))])
     if last in ("open", "fdopen", "ZipFile", "TarFile", "PyZipFile", "FileIO"):
         # The mode is the second argument of open(path, mode), the first of path.open(mode).
         modes = [kw.get("mode")] + args[1:2] + (args[:1] if not module_style else [])
         for m in modes:
             value = _py_const(m, consts) if m is not None else None
             if value and len(value) <= 6 and PY_MODE.fullmatch(value):
-                return "opens a file for writing"
+                target = P(arg(0) if args else kw.get("file")) if module_style else P(func.value)
+                return _scoped(c, "opens a file for writing", [target])
         return ""
     if dotted in ("fileinput.input", "fileinput.FileInput") and "inplace" in kw:
         value = kw["inplace"]
-        return "" if isinstance(value, ast.Constant) and not value.value else "edits files in place"
+        if isinstance(value, ast.Constant) and not value.value:
+            return ""
+        files = kw.get("files") or arg(0)
+        targets = [P(e) for e in files.elts] if isinstance(files, (ast.List, ast.Tuple)) else [P(files)]
+        return _scoped(c, "edits files in place", targets)
     if dotted.startswith("os.") and last in PY_OS_WRITES and dotted.count(".") == 1:
-        return f"calls {dotted}"
+        if last in ("rename", "renames", "replace"):
+            targets = [P(arg(0)), P(arg(1))]  # the source is removed, the destination written
+        elif last in ("symlink", "link"):
+            return _scoped(c, f"calls {dotted}", [P(arg(1))], [P(arg(0))])  # link, then its source
+        else:
+            targets = [P(arg(0))]
+        return _scoped(c, f"calls {dotted}", targets)
     if dotted.startswith("shutil.") and last in PY_SHUTIL_WRITES:
-        return f"calls {dotted}"
+        if last == "move":
+            targets = [P(arg(1)), P(arg(0))]  # destination written, source removed
+        elif last in ("copy", "copy2", "copyfile", "copytree", "copymode", "copystat"):
+            targets = [P(arg(1))]
+        elif last == "unpack_archive":
+            targets = [P(arg(1) or kw.get("extract_dir")) or c.cwd]
+        else:  # rmtree, chown, make_archive
+            targets = [P(arg(0))]
+        return _scoped(c, f"calls {dotted}", targets)
     if dotted.startswith("tempfile.") and last in ("NamedTemporaryFile", "TemporaryFile", "mkstemp",
                                                     "mkdtemp", "TemporaryDirectory", "SpooledTemporaryFile"):
-        return "creates a temporary file"
+        # A temp file lands in the dir given, else in the system temp folder.
+        where = P(kw["dir"]) if "dir" in kw else (os.environ.get("TMPDIR") or "/tmp")
+        return _scoped(c, "creates a temporary file", [where])
     if last in ("FileHandler", "RotatingFileHandler", "TimedRotatingFileHandler", "WatchedFileHandler") or \
             (dotted == "logging.basicConfig" and "filename" in kw):
-        return "logs to a file"
+        return _scoped(c, "logs to a file", [P(arg(0) if args else kw.get("filename"))])
     if sqlite and last in ("execute", "executemany", "executescript") and args:
         sql = _py_const(args[0], consts)
         if sql is None or SQL_WRITES.search(sql):
-            return "writes to a SQLite database"
+            return _scoped(c, "writes to a SQLite database", [None])
     if sqlite and last == "commit" and not args:
-        return "writes to a SQLite database"
+        return _scoped(c, "writes to a SQLite database", [None])
     if dotted.startswith(("os.", "shutil.", "subprocess.", "sys.", "json.", "re.", "time.")) and module_style:
         return ""  # a module function that is not one of the writes above
     if last in PY_METHOD_WRITES:
-        return f"calls {last}()"
+        if last in ("symlink_to", "hardlink_to", "link_to"):
+            return _scoped(c, f"calls {last}()", [P(func.value)], [P(arg(0))])  # link, then its source
+        return _scoped(c, f"calls {last}()", [P(func.value)])
     if last in ("save",) and (args or kw):
-        return "saves a file"
+        return _scoped(c, "saves a file", [P(arg(0))])
     if last in PY_TO_FILE and (args or set(kw) & PY_TARGET_KEYWORDS):
-        return f"calls {last}() with a file"
+        target = arg(0)
+        if target is None:
+            target = next((kw[k] for k in ("path_or_buf", "path", "buf", "excel_writer", "fname") if k in kw), None)
+        return _scoped(c, f"calls {last}() with a file", [P(target)])
     if last in ("rename", "replace") and len(args) == 1 and not node.keywords and \
             not isinstance(args[0], (ast.Dict, ast.Set, ast.List)):
-        return f"calls {last}() on a path"
+        # Path(x).rename(y): the file at x moves to y.
+        return _scoped(c, f"calls {last}() on a path", [P(func.value), P(arg(0))])
     on_str = isinstance(func, ast.Attribute) and isinstance(func.value, ast.Attribute) and \
         func.value.attr == "str"
     if last in ("extractall", "extract") and not module_style and not on_str:  # not pandas .str.extract
-        return "extracts an archive"
+        return _scoped(c, "extracts an archive", [P(arg(0) or kw.get("path")) or c.cwd])
     path_in_dict = any(isinstance(a, ast.Dict) and any(_py_const(k, consts) == "path" for k in a.keys if k)
                        for a in args)
     if last in ("screenshot", "pdf") and ("path" in kw or path_in_dict):
-        return f"saves a {last}"
+        return _scoped(c, f"saves a {last}", [P(kw.get("path"))])
     if last == "urlretrieve" and (len(args) >= 2 or "filename" in kw):
-        return "downloads to a file"
+        return _scoped(c, "downloads to a file", [P(arg(1) if len(args) >= 2 else kw.get("filename"))])
     return ""
 
 

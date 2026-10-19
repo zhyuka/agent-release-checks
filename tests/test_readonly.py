@@ -285,6 +285,20 @@ class ReviewerScopeTest(unittest.TestCase):
             # A fresh temp file with a single link stays allowed.
             self.assertFalse(reviewer_denies(f"echo hi > {c}"))
 
+    def test_inline_python_writes_are_placed(self):
+        # The reviewer denies inline code that writes outside temp, placing its literal target.
+        denied = ["python3 -c \"open('README.md','w')\"",
+                  "python3 -c \"import os; os.remove('/work/site/a')\"",
+                  "python3 -c \"import os; os.symlink('/work/site/a','/tmp/l')\"",
+                  "python3 -c \"from pathlib import Path; Path('/work/site/d').write_text('x')\"",
+                  "python3 -c \"import subprocess; subprocess.run(x)\""]
+        self.assertEqual([c for c in denied if not reviewer_denies(c)], [])
+        allowed = ["python3 -c \"open('/tmp/x','w')\"",
+                   "python3 -c \"import shutil; shutil.move('/tmp/a','/tmp/b')\"",
+                   "python3 -c \"import tempfile; tempfile.mkstemp()\"",
+                   "python3 -c \"import subprocess; subprocess.run(['ls'])\""]
+        self.assertEqual([c for c in allowed if reviewer_denies(c)], [])
+
     @unittest.skipIf(os.name == "nt", "needs symlinks")
     def test_a_temp_symlink_whose_target_is_the_project_is_denied(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as other, tempfile.TemporaryDirectory() as project:
