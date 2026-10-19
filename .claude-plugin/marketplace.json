@@ -5,6 +5,9 @@
     "name": "Derek Zhou",
     "url": "https://github.com/zhyuka"
   },
+  "renames": {
+    "agent-release-checks": "invigilator"
+  },
   "plugins": [
     {
       "name": "invigilator",

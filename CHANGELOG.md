@@ -24,7 +24,7 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 
 ### Changed
 
-- Renamed from agent-release-checks to invigilator. The plugin is `invigilator@zhyuka`, the Python package and the command are `invigilator`, the project file is `.claude/invigilator.json`, the skills are `/invigilator:check` and `/invigilator:setup`, and `INVIGILATOR_PYTHON` picks a Python.
+- Renamed from agent-release-checks to invigilator. The plugin is `invigilator@zhyuka`, the Python package and the command are `invigilator`, the project file is `.claude/invigilator.json`, the skills are `/invigilator:check` and `/invigilator:setup`, and `INVIGILATOR_PYTHON` picks a Python. The marketplace maps the old plugin name to the new one under `renames`.
 - The hooks read their input as UTF-8 on every platform. Python on Windows had read it in the locale's code page.
 - A hook that crashes or can't read its input now lets the call through with a warning and exits 0. Since Claude Code 2.1.299, on Windows without Git Bash, a PreToolUse hook that fails blocks the tool call, so before this change a missing Python there blocked every agent's edits. The PreToolUse hook also sets `"onFailure": "continue"`.
 - `plugin.json` has `documentationUrl`, `supportUrl` and more keywords. The marketplace entry has `version`, `tags` and `homepage`.

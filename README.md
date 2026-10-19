@@ -102,7 +102,7 @@ A project file with bad JSON, an unknown field or a wrong type makes the hooks f
 - The reviewer hook reads the tool call Claude Code is about to make and the project's `.claude/invigilator.json`. It runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls.
 - The QA hook reads the session transcript file that Claude Code passes to Stop and SubagentStop hooks, to find which tool calls ran and whether the QA command passed. It reads tool calls only and keeps nothing. It doesn't run the QA command itself.
 - The line at session start reads the same settings. To show only once per project, it writes an empty marker file under the plugin's data folder in `~/.claude/plugins/data/`. When no Python is found, the hooks write an empty marker file in the temp folder so the warning shows once per session.
-- Each hook runs `sh`, or PowerShell on Windows without Git Bash, to find Python, and then runs this plugin's scripts with it. Nothing else runs, and nothing leaves the machine.
+- Each hook runs `sh`, or PowerShell on Windows without Git Bash, to find Python, and then runs this plugin's scripts with it. To find Python, `hooks/run.sh` also calls `dirname`, `uname`, `sed`, `head` and `printf`, and `xcode-select -p` on macOS. The Python scripts start no other program. Nothing else runs, and nothing leaves the machine.
 - A hook acts only on the agents your settings name. Every other agent is left alone.
 
 ## What each hook blocks
@@ -157,6 +157,7 @@ Claude Code keeps the agent working and hands it the reason as its next instruct
 - Claude Code ends a turn after stop hooks block eight times in a row, but the count starts over each time the agent calls a tool. So the cap never releases a builder that keeps re-running a failing QA command. It stops when QA passes, when you press Esc, or at its turn limit. To let it stop sooner, press Esc, or take the command out of `qa_commands`.
 - The plugin fails open. When no Python runs it or a hook crashes, the call goes through and you see a warning. Failing closed would block every agent's writes whenever Python is missing, so the plugin doesn't set `"onFailure": "block"`.
 - Plugin options are per user. Claude Code doesn't read them from a project's settings, which is why a QA command can only go in the project file.
+- A project's `.claude/invigilator.json` wins over your options, so a repo that ships one decides there who counts as a reviewer or a builder and which QA command counts. Claude Code gives a project's own settings the same trust, and they can turn any plugin off. Read that file in a repo you don't trust.
 - The build scorer reads static HTML, CSS and JS only. Any other build comes out UNSCORABLE.
 
 ## Use the checks without Claude Code
