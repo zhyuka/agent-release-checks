@@ -13,8 +13,12 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 - A SessionStart hook that says in one line what the hooks will block. It shows once per project and again when the settings change, and a config problem shows in every session.
 - `/agent-release-checks:setup`, a skill that finds the project's QA command and writes `.claude/release-checks.json` once you confirm.
 - CI on Ubuntu, macOS and Windows. It runs every hook command on every fixture in sh, dash, bash, Git Bash, pwsh and Windows PowerShell from a plugin path with spaces, and runs `claude plugin validate --strict` on the marketplace and the plugin.
-- classifier: TODO
-- stop hook: TODO
+- The reviewer hook reads a shell command the way the shell does, including `bash -c` strings, `eval`, command substitutions, heredocs, `xargs`, `find -exec` and inline code such as `python -c`. On 699 commands from real agent sessions, labeled by hand, it denies none of the 423 that only read, down from 3, and misses 15 of the 191 that write, down from 39. Of 150 red-team writes made to look harmless, it misses 3, down from 88.
+- A reviewer may write to a temp folder outside the project, such as `/tmp`. Of the 191 labeled writes, the 76 that land only in temp folders now go through.
+- For every agent, a call that changes `.claude/release-checks.json` asks you first, since an agent could turn the checks off by editing it.
+- The QA hook reads the transcript from the end. On the 10 largest transcripts tried, 86 to 347 MB, a stop takes 135 to 215 ms instead of 1.0 to 3.8 s.
+- Replaying 5,287 real transcripts from Claude Code 2.1.136 to 2.1.288 found 68 stops that 0.2.0 blocked wrongly. 66 of them now let the agent stop, and the other 2 block because inline Python and a build step now count as writes. A failed Edit or Write, a command Claude Code refused to run, and a git command that changes only refs, the index or a remote no longer count as writes. The hook reads PowerShell commands, a QA run Claude Code moved to the background no longer counts as passed, and a record Claude Code copied back into the file counts once.
+- The QA hook counts a write only when it lands inside the project, or where the hook can't tell. On the same transcripts, blocks went from 1,372 to 946, because notes in `/tmp` or `~/.claude` no longer send a builder back.
 
 ### Changed
 
