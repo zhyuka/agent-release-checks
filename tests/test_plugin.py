@@ -62,8 +62,8 @@ class PluginFilesTest(unittest.TestCase):
 
     def test_unset_plugin_options_mean_the_defaults(self):
         options = load(".claude-plugin/plugin.json")["userConfig"]
-        self.assertEqual(set(options), {*plugin.LIST_OPTIONS, "reviewer_shell", "session_status"})
-        for key in plugin.LIST_OPTIONS:
+        self.assertEqual(set(options), {*hooks_module.LIST_OPTIONS, "reviewer_shell", "session_status"})
+        for key in hooks_module.LIST_OPTIONS:
             self.assertEqual(options[key]["default"], ", ".join(hooks_module.DEFAULTS[key]), key)
         self.assertEqual(options["reviewer_shell"]["default"], hooks_module.DEFAULTS["reviewer_shell"])
         self.assertEqual(options["session_status"]["default"], plugin.STATUS_MODES[0])

@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from release_checks import hooks, runlog
+from release_checks import hooks, runlog, step_ran
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -160,14 +160,68 @@ class GitTest(unittest.TestCase):
                   "git -c alias.f='!rm -rf build' f", "git diff --output=patch.txt", "npm run build && git add -A",
                   "git push 2>&1 | tee push.log", "git fetch | sed -i s/a/b/ notes.txt"]
         for command in ref_only:
-            self.assertTrue(hooks._ref_only(command), command)
-            self.assertEqual(hooks._writes(runlog.ToolCall("Bash", {"command": command}), QA_COMMANDS), "", command)
+            self.assertTrue(step_ran.ref_only(command), command)
+            self.assertEqual(step_ran.wrote(runlog.ToolCall("Bash", {"command": command}), QA_COMMANDS), "", command)
         for command in writes:
-            self.assertFalse(hooks._ref_only(command), command)
+            self.assertFalse(step_ran.ref_only(command), command)
+
+    def test_the_shell_reading_follows_comments_substitutions_and_heredocs(self):
+        # ref_only() reads the command with shell.split(), which keeps a # inside a word, ends a
+        # comment at the line, and gives each substitution and heredoc its own commands. So it
+        # needs no guard that gives up on a #, a backtick, $(, <( or <<.
+        ref_only = ["git commit -m Fix#12 && git push", "git fetch origin # get the latest\ngit status",
+                    "git push origin \"$(git rev-parse --abbrev-ref HEAD)\"", "git log `git rev-parse HEAD`",
+                    "git commit -F - <<'EOF'\nFix the nav $(rm -rf build)\nEOF", "cat <(git show HEAD:a) | head -5",
+                    "cd 'site #2' && git add -A && git commit -m 'wip'"]
+        writes = ["git fetch # done\nrm -rf build", "git fetch; echo `rm x`", "git log $(rm -rf build)",
+                  "git fetch && cat <(rm x)", "git push 2> >(tee push.log)",
+                  "git commit -F - <<EOF\nFix the nav $(rm -rf build)\nEOF", "git fetch\nbash <<'EOF'\nrm x\nEOF",
+                  "cd site#2 && rm -rf build"]
+        for command in ref_only:
+            self.assertTrue(step_ran.ref_only(command), command)
+        for command in writes:
+            self.assertFalse(step_ran.ref_only(command), command)
+            self.assertTrue(step_ran.wrote(runlog.ToolCall("Bash", {"command": command}), QA_COMMANDS), command)
 
     def test_committing_after_qa_passed_needs_no_second_run(self):
         calls = runlog.read_transcript(TRANSCRIPTS / "builder-commit-after-qa.jsonl")
         self.assertTrue(hooks._verdict(calls, QA_COMMANDS).accepted)
+
+
+class OneRuleTest(unittest.TestCase):
+    """The Stop hook and the check command on a run.json count the same calls as writes."""
+
+    def test_run_json_calls_follow_the_stop_hook_rules(self):
+        cases = [
+            ("a failed Edit", runlog.ToolCall("Edit", {"file_path": "build/a.html"}, False)),
+            ("a refused command", runlog.ToolCall("Bash", {"command": "rm -rf build"}, False, started=False)),
+            ("a ref-only git command", runlog.ToolCall("Bash", {"command": "git add -A && git commit -m x"})),
+            ("a PowerShell read", runlog.ToolCall("PowerShell", {"command": "Get-ChildItem build"})),
+        ]
+        write = runlog.ToolCall("Write", {"file_path": "build/index.html"})
+        qa = runlog.ToolCall("Bash", {"command": "npm run check"})
+        for name, call in cases:
+            calls = [write, qa, call]
+            self.assertEqual(step_ran.last_write(calls, QA_COMMANDS), 0, name)
+            self.assertTrue(step_ran.qa_ran(calls, QA_COMMANDS).accepted, name)
+            self.assertTrue(hooks._verdict(calls, QA_COMMANDS).accepted, name)
+        written = runlog.ToolCall("PowerShell", {"command": "Set-Content build/a.txt x"})
+        self.assertEqual(step_ran.last_write([write, qa, written], QA_COMMANDS), 2)
+
+    def test_a_powershell_qa_run_counts_in_a_run_json_too(self):
+        calls = [runlog.ToolCall("Write", {"file_path": "build/index.html"}),
+                 runlog.ToolCall("PowerShell", {"command": "npm run check"})]
+        self.assertTrue(step_ran.qa_ran(calls, QA_COMMANDS).accepted)
+
+    def test_the_hooks_reach_no_private_helper_in_another_module(self):
+        import ast
+        for module in ("hooks", "plugin", "step_ran", "readonly", "runlog", "check", "cli"):
+            source = (ROOT / "release_checks" / f"{module}.py").read_text(encoding="utf-8")
+            reached = sorted({f"{node.value.id}.{node.attr}" for node in ast.walk(ast.parse(source))
+                              if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                              and node.value.id in ("hooks", "plugin", "shell", "step_ran", "readonly", "runlog")
+                              and node.attr.startswith("_")})
+            self.assertEqual(reached, [], module)
 
 
 class PowerShellTest(unittest.TestCase):
@@ -183,9 +237,9 @@ class PowerShellTest(unittest.TestCase):
                  "Write-Output 'it''s > fine'", "# don't > touch\nGet-ChildItem", ". ./build.ps1",
                  'git commit -m "fix(nav): spacing"', "git -C repo add -A; git push"]
         for command in writes:
-            self.assertTrue(hooks._powershell_writes(command), command)
+            self.assertTrue(step_ran.powershell_writes(command), command)
         for command in reads:
-            self.assertEqual(hooks._powershell_writes(command), "", command)
+            self.assertEqual(step_ran.powershell_writes(command), "", command)
 
 
 class BadInputTest(TempDir):

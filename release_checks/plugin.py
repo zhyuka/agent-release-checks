@@ -1,15 +1,10 @@
 """How the Claude Code plugin runs its hooks.
 
-hooks/run.py calls run() with a hook's name. run() layers the plugin's
-options into the config, runs the hook, and makes sure Claude Code always
-gets an answer it can read. When something goes wrong, the call goes
-through and the user sees one warning, so a broken plugin never blocks work.
-
-Plugin options are the values a user sets with /plugin configure. Claude
-Code keeps them per user, not per project, and passes each one to hooks as
-CLAUDE_PLUGIN_OPTION_<KEY>. They say who counts as a reviewer or a builder.
-A field in the project's .claude/release-checks.json overrides the option,
-and qa_commands can only be set there, since a QA command belongs to a project.
+hooks/run.py calls run() with a hook's name. run() runs the hook and makes
+sure Claude Code always gets an answer it can read. When something goes
+wrong, the call goes through and the user sees one warning, so a broken
+plugin never blocks work. The hooks read the plugin options themselves, in
+hooks.load_config().
 
 session_status() is the SessionStart hook: one line that says what the hooks
 will block, shown once per project unless the session_status option says
@@ -30,56 +25,8 @@ from . import hooks
 HOOK_DIR = Path(__file__).resolve().parent.parent / "hooks"
 SCRIPTS = {"reviewer_readonly": HOOK_DIR / "reviewer_readonly.py",
            "qa_before_done": HOOK_DIR / "qa_before_done.py"}
-OPTION = "CLAUDE_PLUGIN_OPTION_"
-LIST_OPTIONS = ("reviewer_agents", "builder_agents")
 STATUS_MODES = ("once", "always", "off")
 SETUP_SKILL = "/agent-release-checks:setup"
-_project_file_config = hooks.load_config
-
-
-def plugin_options(environ):
-    """(config fields the plugin options set, problem). A bad value is left out and named."""
-    options = {}
-    for key in LIST_OPTIONS:
-        value = environ.get(OPTION + key.upper())
-        if value is not None:
-            options[key] = [part.strip() for part in value.split(",") if part.strip()]
-    shell = (environ.get(OPTION + "REVIEWER_SHELL") or "").strip()
-    if shell in hooks.SHELL_MODES:
-        options["reviewer_shell"] = shell
-    elif shell:
-        return options, (f"the plugin option reviewer_shell is {shell!r}, not \"block-writes\" "
-                         "or \"block-all\", so it is ignored")
-    return options, ""
-
-
-def load_config(project_dir, environ=None):
-    """hooks.load_config with the plugin options layered in: the defaults, then
-    the options, then each field the project file sets. Returns (config, problem)
-    where problem is the project file's, as before."""
-    environ = os.environ if environ is None else environ
-    config, problem = _project_file_config(project_dir)
-    options, _ = plugin_options(environ)
-    in_file = set() if problem else _fields_in(Path(project_dir) / hooks.CONFIG)
-    config.update({key: value for key, value in options.items() if key not in in_file})
-    return config, problem
-
-
-def _fields_in(path):
-    try:
-        return set(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, ValueError, TypeError):
-        return set()
-
-
-@contextlib.contextmanager
-def plugin_config(environ=None):
-    """While the block runs, the hooks read the layered config."""
-    hooks.load_config = lambda project_dir: load_config(project_dir, environ)
-    try:
-        yield
-    finally:
-        hooks.load_config = _project_file_config
 
 
 def run(argv):
@@ -90,7 +37,7 @@ def run(argv):
         reconfigure(encoding="utf-8", errors="replace")
     answer = io.StringIO()
     try:
-        with plugin_config(), contextlib.redirect_stdout(answer):
+        with contextlib.redirect_stdout(answer):
             code = session_status() if name == "session_status" else _run_script(name)
     except Exception as err:  # a broken hook must not block the user's work
         traceback.print_exc()
@@ -131,12 +78,12 @@ def session_status(environ=None):
         event = {}
     event = event if isinstance(event, dict) else {}
     project = environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "."
-    config, problem = load_config(project, environ)
+    config, problem = hooks.load_config(project, environ)
     problems = [f"{problem}. Using the default config"] if problem else []
-    option_problem = plugin_options(environ)[1]
+    option_problem = hooks.plugin_options(environ)[1]
     if option_problem:
         problems.append(option_problem)
-    mode = (environ.get(OPTION + "SESSION_STATUS") or "once").strip().lower()
+    mode = (environ.get(hooks.OPTION + "SESSION_STATUS") or "once").strip().lower()
     if mode not in STATUS_MODES:
         problems.append(f"the plugin option session_status is {mode!r}, not \"once\", "
                         "\"always\" or \"off\", so it is ignored")

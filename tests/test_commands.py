@@ -99,6 +99,15 @@ class ShellSplitTest(unittest.TestCase):
         self.assertEqual(simple.redirects, [(">", "out.txt")])
         self.assertEqual(simple.stdin, [("rm -rf x", False)])
 
+    def test_the_separator_after_a_group_belongs_to_its_last_command(self):
+        level, = shell.split("(cd site && npm test) &")
+        self.assertEqual([(s.words, s.then) for s in level], [(["cd", "site"], "&&"), (["npm", "test"], "&")])
+        level, = shell.split("{ make; } | tail")
+        self.assertEqual([(s.words, s.then) for s in level], [(["make"], "|"), (["tail"], "")])
+
+    def test_heredoc_bodies_are_dropped_for_sizing(self):
+        self.assertEqual(shell.drop_heredocs("cat <<'EOF' > a\nbody\nEOF\nls"), "cat <<'EOF' > a\nls")
+
     def test_file_descriptor_numbers_are_not_words(self):
         (simple,), = shell.split("ls 2>&1 3>/dev/null")
         self.assertEqual(simple.words, ["ls"])

@@ -292,19 +292,19 @@ class PluginOptionsTest(unittest.TestCase):
         (self.project / ".claude" / "release-checks.json").write_text(json.dumps(fields))
 
     def test_without_options_or_a_file_the_defaults_apply(self):
-        self.assertEqual(plugin.load_config(self.project, {}), (hooks.DEFAULTS, ""))
+        self.assertEqual(hooks.load_config(self.project, {}), (hooks.DEFAULTS, ""))
 
     def test_options_set_who_is_a_reviewer_and_a_builder(self):
         env = {"CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS": " auditor, *-review ,",
                "CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS": "main",
                "CLAUDE_PLUGIN_OPTION_REVIEWER_SHELL": "block-all"}
-        config, problem = plugin.load_config(self.project, env)
+        config, problem = hooks.load_config(self.project, env)
         self.assertEqual((config["reviewer_agents"], config["builder_agents"], config["reviewer_shell"],
                           problem), (["auditor", "*-review"], ["main"], "block-all", ""))
 
     def test_a_field_in_the_project_file_wins_over_the_option(self):
         self.configure(reviewer_agents=["code-reviewer"], qa_commands=["make check"])
-        config, _ = plugin.load_config(self.project, {"CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS": "auditor",
+        config, _ = hooks.load_config(self.project, {"CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS": "auditor",
                                                       "CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS": "main"})
         self.assertEqual((config["reviewer_agents"], config["builder_agents"], config["qa_commands"]),
                          (["code-reviewer"], ["main"], ["make check"]))
@@ -312,17 +312,29 @@ class PluginOptionsTest(unittest.TestCase):
     def test_a_broken_file_still_reports_its_problem_and_the_options_apply(self):
         (self.project / ".claude").mkdir()
         (self.project / ".claude" / "release-checks.json").write_text("{")
-        config, problem = plugin.load_config(self.project, {"CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS": "main"})
+        config, problem = hooks.load_config(self.project, {"CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS": "main"})
         self.assertIn("could not be read", problem)
         self.assertEqual(config["builder_agents"], ["main"])
 
     def test_a_bad_shell_option_is_ignored_and_named(self):
-        options, problem = plugin.plugin_options({"CLAUDE_PLUGIN_OPTION_REVIEWER_SHELL": "off"})
+        options, problem = hooks.plugin_options({"CLAUDE_PLUGIN_OPTION_REVIEWER_SHELL": "off"})
         self.assertEqual(options, {})
         self.assertIn("reviewer_shell is 'off'", problem)
 
+    def test_the_hook_scripts_read_the_options_themselves(self):
+        # hooks.load_config() layers the options, so a hook script run on its own sees them too.
+        event = json.loads((FIXTURES / "deny-reviewer-write.json").read_text())
+        event["agent_type"] = "auditor"
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE_PLUGIN_", "CLAUDE_PROJECT_DIR"))}
+        for options, expected in (({}, {}), ({"CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS": "auditor"}, "deny")):
+            done = subprocess.run([sys.executable, str(ROOT / "hooks" / "reviewer_readonly.py")],
+                                  input=json.dumps(event), capture_output=True, text=True, timeout=60,
+                                  env={**env, "CLAUDE_PROJECT_DIR": str(self.project), **options})
+            output = json.loads(done.stdout) if done.stdout.strip() else {}
+            self.assertEqual(output if expected == {} else outcome(output), expected, done.stderr)
+
     def test_an_empty_list_option_means_no_agent(self):
-        self.assertEqual(plugin.plugin_options({"CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS": ""})[0],
+        self.assertEqual(hooks.plugin_options({"CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS": ""})[0],
                          {"reviewer_agents": []})
 
 

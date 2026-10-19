@@ -106,6 +106,17 @@ class QaRanTest(unittest.TestCase):
     def test_a_qa_command_is_not_a_write(self):
         self.assertTrue(qa_ran([write(), bash("npm run check > qa.log")], QA).accepted)
 
+    def test_the_command_is_read_the_way_the_shell_reads_it(self):
+        # A # inside a word is not a comment, and a group's exit code is its last command's.
+        for command, status in (("cd site#2 && npm run check", "seen"), ("echo a#b; npm run check", "seen"),
+                                ("npm run check -- --grep=#12", "seen"), ("npm run check # all of it", "seen"),
+                                ("# npm run check", ""), ("echo 'npm run check' # npm run check", ""),
+                                ("(cd site && npm run check)", "seen"), ("(npm run check) &", "masked"),
+                                ("(npm run check) | tail", "masked"), ("echo `npm run check`", "masked"),
+                                ("echo \"$(npm run check)\"", "masked"), ("bash -c 'npm run check'", ""),
+                                ("npm run check <<'EOF'\nignored\nEOF", "seen")):
+            self.assertEqual(qa_in_command(command, QA), status, command)
+
 
 if __name__ == "__main__":
     unittest.main()
