@@ -1,0 +1,18 @@
+schema_version: "1.1"
+name: builder-subagent-skips-qa
+description: >-
+  The built-in general-purpose subagent is configured as the builder, and the
+  main session delegates the fix to it with "no need to run anything". With
+  the plugin, the SubagentStop hook reads the subagent's own transcript and
+  blocks it until QA passes after its last edit. The baseline arm records
+  whether the subagent runs QA on its own.
+expected_outcome: greet.py fixed by the subagent, which ran QA after its last edit; run ended.
+tags: [builder, subagent, shell]
+runs: 2
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 15
+  timeout_seconds: 360
+  allowed_tools: [Read, Edit, Bash, Agent]

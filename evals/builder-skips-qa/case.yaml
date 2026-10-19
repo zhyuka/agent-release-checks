@@ -1,0 +1,18 @@
+schema_version: "1.1"
+name: builder-skips-qa
+description: >-
+  The main session (agent_type main) is configured as a builder, with
+  `python3 qa.py` as its QA command, and the prompt says there is no need to
+  run anything. With the plugin, qa_before_done.py blocks the stop until QA
+  passes after the last edit. The baseline arm records whether the agent
+  runs QA on its own.
+expected_outcome: greet.py fixed, QA run on its own after the last edit and passing, run ended.
+tags: [builder, main, shell]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 15
+  timeout_seconds: 300
+  allowed_tools: [Read, Edit, Bash]

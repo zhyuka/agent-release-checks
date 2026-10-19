@@ -1,0 +1,163 @@
+name: live evals
+
+# Runs the eval suite in evals/ through `claude plugin eval`: real Claude Code
+# sessions with the plugin loaded, and the same cases again without it as the
+# baseline. Every run is a paid model call on the ANTHROPIC_API_KEY repository
+# secret, so the workflow runs only on manual dispatch and on pushes to main
+# that touch the plugin or the suite, and skips when the secret is not set.
+# There is no pull_request trigger, so a pull request from a fork never runs it.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "hooks/**"
+      - "release_checks/**"
+      - "evals/**"
+      - ".claude-plugin/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-evals
+  cancel-in-progress: false
+
+env:
+  # "latest", "stable" or a version such as 2.1.288. plugin eval needs 2.1.269 or later.
+  CLAUDE_CODE_VERSION: latest
+  JUDGE_MODEL: claude-haiku-4-5
+
+jobs:
+  key:
+    name: Check for the API key
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The ANTHROPIC_API_KEY secret is not set, so the live evals are skipped."
+          fi
+
+  evals:
+    name: Live evals (${{ matrix.os }})
+    needs: key
+    if: needs.key.outputs.present == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            tools: Bash Edit Write
+            filter: ""
+          - os: macos-latest
+            tools: Bash Edit Write
+            filter: ""
+          # Native Windows has no Bash sandbox, and `claude plugin eval` refuses
+          # every run that grants a shell there. Windows runs only the cases
+          # tagged no-shell, with Edit and Write granted.
+          - os: windows-latest
+            tools: Edit Write
+            filter: --tag no-shell
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      # The plugin's hooks run `python3`. Linux and macOS runners have one;
+      # setup-python on Windows installs python.exe only, so add python3.exe.
+      - uses: actions/setup-python@v7
+        if: runner.os == 'Windows'
+        with:
+          python-version: "3.12"
+      - name: Make python3 resolve (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          dir="$(dirname "$(command -v python)")"
+          [ -e "$dir/python3.exe" ] || cp "$dir/python.exe" "$dir/python3.exe"
+
+      # The Bash sandbox on Linux needs bubblewrap and socat, and on Ubuntu
+      # 24.04 an AppArmor profile that lets bwrap create user namespaces.
+      - name: Set up the Bash sandbox (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap socat
+          if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = "1" ]; then
+            printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' '' \
+              'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' \
+              '  include if exists <local/bwrap>' '}' | sudo tee /etc/apparmor.d/bwrap > /dev/null
+            sudo systemctl reload apparmor
+          fi
+
+      - name: Install Claude Code (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install Claude Code (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & ([scriptblock]::Create((irm https://claude.ai/install.ps1))) $env:CLAUDE_CODE_VERSION
+          "$env:USERPROFILE\.local\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Versions
+        run: |
+          claude --version
+          python3 --version
+          git --version
+
+      - name: Validate the plugin and the marketplace
+        run: |
+          claude plugin validate .claude-plugin/plugin.json
+          claude plugin validate .
+
+      # --scaffold runs each case's scaffold.sh, which only writes fixture
+      # files. --trust-plugin answers the first-run trust prompt. The cost
+      # ceiling is a list-price estimate checked before each run starts.
+      - name: Run the live evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p evals/results
+          claude plugin eval . ${{ matrix.filter }} \
+            --trust-plugin \
+            --scaffold \
+            --no-publish \
+            --max-cost-usd 3 \
+            --threshold 0.8 \
+            --judge-model "$JUDGE_MODEL" \
+            --concurrency 3 \
+            --json "evals/results/live-${{ runner.os }}.json" \
+            --allow-tools ${{ matrix.tools }}
+
+      - name: Summarize
+        if: always()
+        run: |
+          result="evals/results/live-${{ runner.os }}.json"
+          if [ -f "$result" ]; then
+            python3 evals/summarize.py "$result" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No result file: the eval step did not write $result." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the JSON result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-evals-${{ runner.os }}
+          path: evals/results/live-${{ runner.os }}.json
+          if-no-files-found: warn
+          retention-days: 30

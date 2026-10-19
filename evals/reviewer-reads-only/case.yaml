@@ -1,0 +1,19 @@
+schema_version: "1.1"
+name: reviewer-reads-only
+description: >-
+  No false block. The main session is configured as a reviewer and asked
+  only to read and report, through git log, git diff, cat, grep, wc and ls.
+  With the plugin, none of those commands may be denied and the review has
+  to finish. The baseline arm should score the same, so the expected delta
+  is about 0. This case can't tell a working hook from one that never ran;
+  the reviewer-* deny cases in the same run are its positive control.
+expected_outcome: Every command runs, nothing is denied, and the review names the a - b bug.
+tags: [reviewer, main, shell]
+runs: 2
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 12
+  timeout_seconds: 240
+  allowed_tools: [Read, Bash]

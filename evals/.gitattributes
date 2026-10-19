@@ -1,0 +1,3 @@
+# Scaffolds run under bash and graders match files byte for byte, so keep LF
+# line endings on every platform, Windows checkouts included.
+* text eol=lf
