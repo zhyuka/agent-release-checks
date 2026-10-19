@@ -123,7 +123,9 @@ class HookConfigTest(unittest.TestCase):
     def test_a_catch_all_builder_pattern_still_skips_claude_codes_own_agents(self):
         self.configure(json.dumps({"builder_agents": ["*"], "qa_commands": ["npm run check"]}))
         self.assertEqual(run_hook(QA, fixture("allow-internal-agent-stops"), self.project)[1], {})
-        self.assertEqual(outcome(run_hook(QA, fixture("block-main-no-qa"), self.project)[1]), "block")
+        event = json.loads(fixture("block-main-no-qa"))
+        event["cwd"] = str(self.project)  # the transcript's build/index.html is then in this project
+        self.assertEqual(outcome(run_hook(QA, json.dumps(event), self.project)[1]), "block")
 
     def test_the_readonly_hook_only_answers_pre_tool_use(self):
         event = json.loads(fixture("deny-reviewer-write"))

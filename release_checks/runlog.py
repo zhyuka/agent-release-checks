@@ -49,7 +49,8 @@ class RunLogError(ValueError):
 @dataclass
 class ToolCall:
     """One tool call. ok is None when the result is unknown. started is False when
-    Claude Code refused the call or could not start it, so it did nothing."""
+    Claude Code refused the call or could not start it, so it did nothing. cwd is
+    the working folder the transcript records for the call, or "" when it has none."""
     tool: str
     input: dict
     ok: Optional[bool] = True
@@ -58,6 +59,7 @@ class ToolCall:
     offset: int = -1
     end: int = -1
     has_result: bool = False
+    cwd: str = ""
 
 
 @dataclass
@@ -170,15 +172,17 @@ def _content(entry):
     return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
 
 
-def _new_call(block, offset):
+def _new_call(block, offset, entry):
     tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
     call_id = block.get("id") if isinstance(block.get("id"), str) else ""
-    return ToolCall(str(block.get("name", "")), tool_input, None, id=call_id, offset=offset)
+    cwd = entry.get("cwd") if isinstance(entry.get("cwd"), str) else ""
+    return ToolCall(str(block.get("name", "")), tool_input, None, id=call_id, offset=offset, cwd=cwd)
 
 
 def tool_uses(line):
     """The tool calls in one raw transcript line, in order. A line that is not a record gives none."""
-    return [_new_call(block, -1) for block in _content(_parse(line)) if block.get("type") == "tool_use"]
+    entry = _parse(line)
+    return [_new_call(block, -1, entry) for block in _content(entry) if block.get("type") == "tool_use"]
 
 
 def _text(content):
@@ -282,10 +286,11 @@ class Transcript:
     def calls(self):
         """ToolCalls from the last to the first, with ok unknown until resolve() is called."""
         for offset, line in self.lines_with((TOOL_USE,)):
-            for block in reversed(_content(_parse(line))):
+            entry = _parse(line)
+            for block in reversed(_content(entry)):
                 if block.get("type") == "tool_use":
                     self.calls_seen += 1
-                    call = _new_call(block, offset)
+                    call = _new_call(block, offset, entry)
                     call.end = offset + len(line)
                     yield call
 
@@ -381,7 +386,7 @@ def read_transcript(path, deadline=None):
             entry = _parse(line)
             for block in _content(entry):
                 if block.get("type") == "tool_use":
-                    call = _new_call(block, -1)
+                    call = _new_call(block, -1, entry)
                     if call.id and call.id in by_id:
                         continue
                     calls.append(call)

@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from release_checks import hooks, runlog, step_ran
+from release_checks import hooks, readonly, runlog, step_ran
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -52,7 +52,7 @@ def tool_result(call_id, text="ok", error=False):
         {"type": "tool_result", "tool_use_id": call_id, "content": text, "is_error": error}]}}
 
 
-WRITE = [tool_use("toolu_w", "Write", {"file_path": "/p/build/index.html", "content": "<main></main>"}),
+WRITE = [tool_use("toolu_w", "Write", {"file_path": "build/index.html", "content": "<main></main>"}),
          tool_result("toolu_w")]
 CHECK = [tool_use("toolu_q", "Bash", {"command": "npm run check"}), tool_result("toolu_q")]
 DONE = [{"type": "assistant", "message": {"content": [{"type": "text", "text": "Done."}]}}]
@@ -118,11 +118,13 @@ class WhatCountsTest(TempDir):
         self.assertEqual([c.tool for c in calls], ["Write", "Bash", "Edit"])
 
     def test_reading_from_the_end_agrees_with_reading_from_the_start(self):
+        project = str(FIXTURES / "project")
         for path in sorted(TRANSCRIPTS.glob("*.jsonl")):
-            forward = hooks._verdict(runlog.read_transcript(path), QA_COMMANDS)
-            backward, _ = hooks.stop_verdict(path, QA_COMMANDS, runlog.Deadline(30))
-            self.assertEqual(forward and (forward.accepted, forward.reason),
-                             backward and (backward.accepted, backward.reason), path.name)
+            for scope in (None, readonly.project_scope(project, project)):
+                forward = hooks._verdict(runlog.read_transcript(path), QA_COMMANDS, scope=scope)
+                backward, _ = hooks.stop_verdict(path, QA_COMMANDS, runlog.Deadline(30), scope)
+                self.assertEqual(forward and (forward.accepted, forward.reason),
+                                 backward and (backward.accepted, backward.reason), (path.name, scope))
 
     def test_only_the_lines_that_decide_are_parsed(self):
         reads = [tool_use(f"toolu_r{n}", "Read", {"file_path": f"/p/src/{n}.js"}) for n in range(5000)]
@@ -224,6 +226,47 @@ class OneRuleTest(unittest.TestCase):
             self.assertEqual(reached, [], module)
 
 
+class ProjectScopeTest(TempDir):
+    """A write counts only when it lands in the project, or where the hook can't tell."""
+
+    def bash(self, command, cwd=None):
+        record = tool_use("toolu_b", "Bash", {"command": command})
+        return [dict(record, cwd=cwd) if cwd else record, tool_result("toolu_b")]
+
+    def test_a_write_outside_the_project_needs_no_qa_run(self):
+        outside = [tool_use("toolu_o", "Write", {"file_path": str(self.tmp / "notes.md")}), tool_result("toolu_o")]
+        self.assertEqual(self.outcome(stop_event(self.transcript(lines(*outside, *DONE)))), "allow")
+        self.assertEqual(self.outcome(stop_event(self.transcript(lines(*WRITE, *CHECK, *outside, *DONE)))), "allow")
+        self.assertEqual(self.outcome(stop_event(self.transcript(lines(*CHECK, *outside, *WRITE, *DONE)))), "block")
+
+    def test_a_relative_path_starts_where_the_call_ran(self):
+        # The project is CLAUDE_PROJECT_DIR. The hook input's cwd, or the cwd on the
+        # transcript record, says where build/index.html is.
+        path = self.transcript(lines(*WRITE, *DONE))
+        self.assertEqual(self.outcome(stop_event(path, cwd=str(self.tmp))), "allow")
+        self.assertEqual(self.outcome(stop_event(path)), "block")
+        moved = [dict(WRITE[0], cwd=str(FIXTURES / "project")), WRITE[1]]
+        self.assertEqual(self.outcome(stop_event(self.transcript(lines(*moved, *DONE), "moved.jsonl"),
+                                                 cwd=str(self.tmp))), "block")
+        (self.tmp / ".claude").mkdir()
+        config = {"qa_commands": QA_COMMANDS, "builder_agents": ["main"]}
+        (self.tmp / ".claude" / "release-checks.json").write_text(json.dumps(config))
+        self.assertEqual(self.outcome(stop_event(path, cwd=str(self.tmp)), project=None), "block",
+                         "without CLAUDE_PROJECT_DIR the project is the hook input's cwd")
+
+    def test_a_shell_cd_moves_where_a_write_lands(self):
+        for command, expected in ((f"cd '{self.tmp}' && touch notes.txt", "allow"),
+                                  ("cd build && touch notes.txt", "block"),
+                                  (f"(cd '{self.tmp}' && touch a) && touch b", "block"),
+                                  ("cd .. && touch notes.txt", "allow"),
+                                  ("echo hi >> ~/notes.txt", "allow"),
+                                  (f"touch '{self.tmp}/a' build/b", "block"),
+                                  ('touch "$OUT"', "block"),
+                                  (f"ls '{self.tmp}' | xargs rm", "block")):
+            path = self.transcript(lines(*self.bash(command), *DONE))
+            self.assertEqual(self.outcome(stop_event(path)), expected, command)
+
+
 class PowerShellTest(unittest.TestCase):
     def test_writes_are_read_from_cmdlets_redirects_and_programs(self):
         writes = ["New-Item -ItemType Directory build", "Get-Date > out.txt", "echo hi>out.txt", "cd a; rm b",
@@ -288,13 +331,13 @@ class BadInputTest(TempDir):
         path = self.transcript(lines(*WRITE, *DONE))
         for qa in (["npm run 'check"], [""], ["  "]):
             (project / ".claude" / "release-checks.json").write_text(json.dumps({"qa_commands": qa, "builder_agents": ["main"]}))
-            code, output, stderr = run_hook(stop_event(path), project=project)
+            code, output, stderr = run_hook(stop_event(path, cwd=str(project)), project=project)
             self.assertEqual(code, 0, stderr)
             self.assertNotIn("decision", output, qa)
             self.assertIn("did not run", output["systemMessage"], qa)
         (project / ".claude" / "release-checks.json").write_text(
             json.dumps({"qa_commands": ["", "npm run check"], "builder_agents": ["main"]}))
-        output = run_hook(stop_event(path), project=project)[1]
+        output = run_hook(stop_event(path, cwd=str(project)), project=project)[1]
         self.assertEqual(output["decision"], "block")
         self.assertIn("is left out", output["systemMessage"])
 

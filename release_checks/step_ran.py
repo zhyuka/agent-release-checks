@@ -244,42 +244,47 @@ def ref_only(command):
     return seen_git
 
 
-def wrote(call, qa_commands):
+def wrote(call, qa_commands, scope=None):
     """Why a builder's tool call wrote files, or "". A QA command is never a write, and
     neither is a write tool that failed, a shell command Claude Code never started, or a
-    git command that changes only refs, the index or a remote."""
+    git command that changes only refs, the index or a remote.
+
+    With a readonly.Scope, such as readonly.project_scope(), a write counts only when a
+    place it lands counts. Relative paths start at the cwd the call records, else at the
+    scope's own cwd."""
+    scope = scope.at(getattr(call, "cwd", "")) if scope is not None else None
     if call.tool in readonly.WRITE_TOOLS:
-        return "" if call.ok is False else readonly.writes(call.tool, call.input)
+        return "" if call.ok is False else readonly.writes(call.tool, call.input, scope)
     if call.tool not in SHELLS:
         return ""
     command = shell_command(call)
     if not call.started or (command is not None and qa_status(call, qa_commands)):
         return ""
-    if command is None:
-        return "the command is missing or too long to read"
-    if call.tool == "PowerShell":
-        return powershell_writes(command)
-    reason = readonly.command_writes(command)
+    if command is None or call.tool == "PowerShell":
+        # The PowerShell reading does not say where a write lands, so it counts wherever it is.
+        reason = "the command is missing or too long to read" if command is None else powershell_writes(command)
+        return reason if scope is None or scope.counts(None) else ""
+    reason = readonly.command_writes(command, scope)
     return "" if reason and ref_only(command) else reason
 
 
-def last_write(calls, qa_commands):
+def last_write(calls, qa_commands, scope=None):
     """Index of the last call that wrote files, or -1."""
-    return max((i for i, call in enumerate(calls) if wrote(call, qa_commands)), default=-1)
+    return max((i for i, call in enumerate(calls) if wrote(call, qa_commands, scope)), default=-1)
 
 
-def qa_ran(calls, qa_commands, ran_before=False, written=None):
+def qa_ran(calls, qa_commands, ran_before=False, written=None, scope=None):
     """Accept a "QA passed" claim only if a QA command succeeded after the last file write.
 
     calls are tool calls in order, each with .tool, .input, .ok (True, False, or None when
     the result is unknown, such as a command run in the background) and .started.
     ran_before says whether a QA command ran before the first of calls: False when calls
     are the whole run, True, or None when that is not known. written is last_write(calls),
-    for a caller that has it already.
+    for a caller that has it already. scope is as for wrote().
     """
     runs = [(i, status, call) for i, call in enumerate(calls)
             for status in [qa_status(call, qa_commands)] if status]
-    written = last_write(calls, qa_commands) if written is None else written
+    written = last_write(calls, qa_commands, scope) if written is None else written
     after = [(status, call) for i, status, call in runs if i > written]
     names = " or ".join(repr(qa) for qa in qa_commands)
     if not runs and ran_before is False:

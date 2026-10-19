@@ -16,15 +16,22 @@ counts as a write when its flags say so (--write, --fix, --out FILE).
 
 touch_check() uses the same reading to say whether a call changes one given
 file, such as the release-checks config.
+
+With a Scope, writes() counts a write only when a place it lands counts, such
+as a file inside the project. A write the command line does not place, such
+as a build step's output or what inline code writes, always counts.
 """
 import ast
 import fnmatch
 import hashlib
+import ntpath
 import os
+import posixpath
 import random
 import re
 import shlex
 import shutil
+import sys
 import tempfile
 import warnings
 from dataclasses import dataclass
@@ -286,7 +293,8 @@ class _Checker:
 
     def nested(self, command, where=""):
         """Why a command line another program runs writes files, or ""."""
-        reason = command_writes(command, self.depth + 1, self.vars, self.touches, self.cwd)
+        reason = command_writes(command, _depth=self.depth + 1, _variables=self.vars, _touches=self.touches,
+                                _cwd=self.cwd)
         plain = reason not in ("the command could not be parsed", "nests commands too deeply to check")
         if reason and where and plain and not reason.endswith(")"):
             reason = f"{reason} ({where})"  # the innermost place only
@@ -358,16 +366,21 @@ class _Checker:
             reason = _flag_writes(name, args)
         if not reason or self.touches is None or isinstance(reason, _Inner):
             return reason
+        if isinstance(self.touches, _InScope):
+            return _Inner(self.hit(reason, *_landing(name, args)))
         # Mark it checked, so a wrapper such as sudo or xargs does not check it again on its own words.
         return _Inner(self.hit(reason, *self.narrow(name, args, words, before)))
 
 
-def command_writes(command, _depth=0, _variables=None, _touches=None, _cwd=None):
+def command_writes(command, scope=None, _depth=0, _variables=None, _touches=None, _cwd=None):
     """Why a shell command line writes files, or "" when nothing in it says so.
 
-    _touches and _cwd are for touch_check: a write then counts only when it
-    names the watched path.
+    With a Scope, a write counts only when a place it lands counts. _touches
+    and _cwd are for touch_check: a write then counts only when it names the
+    watched path.
     """
+    if scope is not None:
+        _touches, _cwd = _InScope(scope.counts), scope.cwd or os.getcwd()
     unsure = ""
     if _depth > MAX_DEPTH:
         unsure = "nests commands too deeply to check"
@@ -380,28 +393,296 @@ def command_writes(command, _depth=0, _variables=None, _touches=None, _cwd=None)
         # A touch check asks only when the text it cannot read names the file.
         return unsure if _touches is None or _touches.mentions(command) else ""
     checker = _Checker(_depth, _variables, _touches, _cwd)
-    for level in levels:
+    start, moved = checker.cwd, False
+    for index, level in enumerate(levels):
+        # A substitution runs where the command line has got to by then. After a cd that is
+        # not known here, so a relative path in it can't be placed.
+        cwds = {(): start if index == 0 or not moved else UNKNOWN_CWD}
         for k, simple in enumerate(level):
+            if start is not None:
+                # A cd inside a ( ) subshell holds only until the subshell ends.
+                group = simple.group
+                checker.cwd = next(cwds[group[:n]] for n in range(len(group), -1, -1) if group[:n] in cwds)
+                was = checker.cwd
             before = level[k - 1] if k and level[k - 1].then in ("|", "|&") else None
             reason = checker.simple(simple, before)
             if reason:
                 return str(reason)
+            if start is not None:
+                moved = moved or checker.cwd != was
+                cwds[simple.group] = checker.cwd
     return ""
 
 
-def writes(tool, tool_input):
+def writes(tool, tool_input, scope=None):
     """Why one tool call writes files, or "" when it does not appear to.
 
-    tool and tool_input use Claude Code's tool names and input fields.
+    tool and tool_input use Claude Code's tool names and input fields. With a
+    Scope, a write counts only when a place it lands counts.
     """
     if tool in WRITE_TOOLS:
-        target = tool_input.get("file_path") or tool_input.get("notebook_path") or "a file"
-        return f"writes {target}"
+        target = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+        target = target if isinstance(target, str) else ""
+        if scope is not None and not scope.counts(resolve_path(target, scope.cwd or os.getcwd())):
+            return ""
+        return f"writes {target or 'a file'}"
     if tool == "Bash":
-        return command_writes(tool_input.get("command", ""))
+        return command_writes(tool_input.get("command", ""), scope)
     if tool == "PowerShell":
         return "PowerShell commands are not parsed, so they count as writes"
     return ""
+
+
+# Where a write lands ------------------------------------------------------------------
+
+WINDOWS_PATH = re.compile(r"[A-Za-z]:[\\/]|\\\\")
+GIT_BASH_DRIVE = re.compile(r"/([A-Za-z])(?=/|$)")
+KNOWN_VARIABLES = re.compile(r"\$(?:\{(HOME|TMPDIR|TEMP|TMP|PWD)\}|(HOME|TMPDIR|TEMP|TMP|PWD)(?![A-Za-z0-9_]))")
+UNKNOWN = "$?"  # a place a write lands that the command line does not show
+UNKNOWN_CWD = "$(pwd)"  # a working folder this check can't follow
+TEMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
+WINDOWS_TEMP = re.compile(r"[a-z]:\\users\\[^\\]+\\appdata\\local\\temp(\\|$)")
+FOLD_CASE = sys.platform == "darwin" or os.name == "nt"
+
+
+@dataclass(frozen=True)
+class Scope:
+    """Which writes count. counts(path) decides for each place a write lands: a resolved
+    path, or None when the check can't tell where it lands. Relative paths start at cwd."""
+    counts: object
+    cwd: str = ""
+
+    def at(self, cwd):
+        """The same scope with relative paths starting at cwd, when cwd is given."""
+        return Scope(self.counts, cwd) if cwd and isinstance(cwd, str) else self
+
+
+def _windows(path):
+    return bool(WINDOWS_PATH.match(path))
+
+
+def _variable(name, cwd):
+    if name == "HOME":
+        return os.path.expanduser("~")
+    if name == "PWD":
+        return cwd or "$PWD"
+    return os.environ.get(name) or f"${name}"
+
+
+def resolve_path(text, cwd):
+    """text as a normalized absolute path, or None when it can't be resolved.
+
+    ~, $HOME, $TMPDIR, $TEMP, $TMP and $PWD are filled in. Any other variable or
+    substitution, a ~user this machine can't look up, or a relative path when cwd
+    can't be resolved gives None. Windows paths and Git Bash drive paths such as
+    /c/Users are read as Windows paths."""
+    if not text or "\0" in text:
+        return None
+    text = KNOWN_VARIABLES.sub(lambda m: _variable(m.group(1) or m.group(2), cwd), text)
+    if text.startswith("~"):
+        text = os.path.expanduser(text)
+        if text.startswith("~"):
+            return None
+    if "$" in text or "`" in text or (text.startswith("\\") and not _windows(text)):
+        return None
+    windows_host = os.name == "nt" or (cwd and _windows(cwd))
+    if windows_host and GIT_BASH_DRIVE.match(text):
+        text = text[1].upper() + ":" + (text[2:] or "/")
+    if not (_windows(text) or text.startswith("/")):
+        if not cwd or "$" in cwd or "`" in cwd:
+            return None
+        base = cwd if _windows(cwd) or cwd.startswith("/") else os.path.abspath(cwd)
+        text = (ntpath if _windows(base) else posixpath).join(base, text)
+    return ntpath.normpath(text) if _windows(text) else posixpath.normpath(text)
+
+
+def _key(path):
+    return path.casefold() if FOLD_CASE or _windows(path) else path
+
+
+def _variants(path):
+    """path, and the path with symlinks resolved when it is this machine's kind of path."""
+    out = {path}
+    if _windows(path) == (os.name == "nt"):
+        try:
+            out.add(os.path.realpath(path))
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def _under(path, root):
+    path, root = _key(path), _key(root)
+    if _windows(path) != _windows(root):
+        return False
+    sep = "\\" if _windows(root) else "/"
+    return path == root or path.startswith(root.rstrip(sep) + sep)
+
+
+def _inside(path, roots):
+    return any(_under(v, r) for v in _variants(path) for r in roots)
+
+
+def in_temp(path):
+    """Whether a resolved path is in a temp folder: /tmp, /var/folders, $TMPDIR, %TEMP%,
+    or a user's AppData\\Local\\Temp. Every form of it has to be, symlinks resolved too."""
+    roots = list(TEMP_ROOTS) + [v for v in (os.environ.get(n) for n in ("TMPDIR", "TEMP", "TMP"))
+                                if v and (v.startswith("/") or _windows(v))]
+    return all(any(_under(v, r) for r in roots) or (_windows(v) and WINDOWS_TEMP.match(_key(v)))
+               for v in _variants(path))
+
+
+def _roots(project):
+    root = resolve_path(project, os.getcwd()) if isinstance(project, str) else None
+    return set().union(*(_variants(r) for r in [root] if r))
+
+
+def project_scope(project, cwd=""):
+    """The Stop hook's scope: a write counts when it lands inside the project folder, or
+    where the check can't tell."""
+    roots = _roots(project)
+    return Scope(lambda path: path is None or not roots or _inside(path, roots), cwd)
+
+
+def reviewer_scope(project, cwd=""):
+    """A reviewer's scope: every write counts except one that lands in a temp folder outside
+    the project. A write where the check can't tell counts."""
+    roots = _roots(project)
+    return Scope(lambda path: path is None or not roots or _inside(path, roots) or not in_temp(path), cwd)
+
+
+class _InScope:
+    """touches() for a Scope: whether one place a write lands counts."""
+
+    def __init__(self, counts):
+        self.counts = counts
+
+    def __call__(self, text, cwd):
+        if text.startswith("-") and "=" in text:
+            text = text.split("=", 1)[1]  # --output=FILE
+        return self.counts(resolve_path(text, cwd))
+
+    def mentions(self, text):
+        return self.counts(None)  # code or a command this check can't read lands it can't tell where
+
+    def alias(self, text, cwd):
+        pass
+
+
+# Programs that write only the paths they are given, with the short options that take a
+# value that is not a path.
+PATH_ARGUMENTS = {"rm": "", "grm": "", "srm": "", "trash": "", "unlink": "", "rmdir": "", "mkdir": "m",
+                  "gmkdir": "m", "touch": "dt", "gtouch": "dt", "truncate": "s", "shred": "ns",
+                  "fallocate": "lo", "mkfifo": "m", "mknod": "m", "tee": "", "sponge": ""}
+MODE_FIRST = {"chmod", "chown", "chgrp", "chflags", "chattr", "setfacl"}  # chmod MODE FILE...
+COPIERS = {"cp", "gcp", "install", "ditto", "scp", "rsync", "mv", "gmv"}
+
+
+def _landing(name, args):
+    """Where a write by this program lands, as path texts. UNKNOWN stands for a place the
+    command line does not show, such as what a build step or a package install writes."""
+    positional = _positionals(args)
+    handler = HANDLERS.get(name)
+    if name in PATH_ARGUMENTS:
+        return _positionals(args, PATH_ARGUMENTS[name])
+    if name in MODE_FIRST:
+        return positional if any(a.startswith("--reference") for a in args) else positional[1:]
+    if name in COPIERS:
+        target = _values(args, "t", ("--target-directory",))
+        dest = target[0] if target else (positional[-1] if positional else "")
+        sources = positional if target else positional[:-1]
+        landed = [dest] + [os.path.join(dest, os.path.basename(s.rstrip("/"))) for s in sources if dest]
+        return landed + (sources if name in ("mv", "gmv") else [])  # mv also takes the source away
+    if name in ("ln", "gln", "link"):
+        return _values(args, "t", ("--target-directory",)) or positional[-1:]
+    if name == "dd":
+        return [a[3:] for a in args if a.startswith("of=")]
+    if name in ("sort", "gsort"):
+        return _values(args, "o", ("--output",), stop="kStT")
+    if name in ("base64", "iconv"):
+        return _values(args, "o", ("--output",), stop="ft")
+    if name in ("uniq", "xxd"):
+        return positional[1:]
+    if name in ("sed", "gsed"):
+        if not any(re.match(r"-[a-zA-Z]*[iI]|--in-place", a) for a in args):
+            return [UNKNOWN]  # a w or e command in the script
+        files = _positionals(args, "elf", ("--expression", "--file", "--line-length"))
+        given = _values(args, "e", ("--expression",), stop="flE") or _values(args, "f", ("--file",))
+        return files if given else files[1:]
+    if name == "perl":
+        codes = _values(args, "eE")
+        return [p for p in positional if p not in codes]
+    if name in ("awk", "gawk", "mawk", "nawk"):
+        if "inplace" not in _values(args, "i", ("--include",), stop="Ffv"):
+            return [UNKNOWN]  # print > file inside the program
+        files = _positionals(args, "Fvfi", ("--field-separator", "--assign", "--file", "--include"))
+        given = _values(args, "e", ("--source",), stop="Ffvi") or _values(args, "f", ("--file",), stop="Fvi")
+        return files if given else files[1:]
+    if name in ("find", "gfind"):
+        starts = []
+        for a in args:
+            if a.startswith(("-", "(", "!")):
+                break
+            starts.append(a)
+        printed = [args[k + 1] for k, a in enumerate(args[:-1]) if a in ("-fprint", "-fprint0", "-fprintf", "-fls")]
+        return (starts or ["."]) + printed
+    if name in ("tar", "gtar", "bsdtar"):
+        letters = (args[0] if args and not args[0].startswith("-") else "") + \
+            "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
+        if "x" in letters or set(args) & {"--extract", "--get"}:
+            return _values(args, "C", ("--directory",)) or ["."]
+        archive = _values(args, "f", ("--file",))
+        if not archive and args and not args[0].startswith("-") and "f" in args[0]:
+            archive = args[1:2]
+        return archive or [UNKNOWN]
+    if name == "unzip":
+        return _values(args, "d") or ["."]
+    if name == "curl":
+        out = [v for v in _values(args, "oDc", ("--output", "--dump-header", "--cookie-jar", "--output-dir",
+                                                "--trace", "--trace-ascii", "--libcurl", "--etag-save"),
+                                  stop=CURL_TAKES) if _is_file(v)]
+        if _short(args, "O", CURL_TAKES) or "--remote-name" in args or "--remote-name-all" in args:
+            out += ["."]
+        return out or [UNKNOWN]
+    if name == "wget":
+        out = _values(args, "OPoa", ("--output-document", "--directory-prefix", "--output-file",
+                                     "--append-output"), stop="eiBtTwQUY")
+        return out + ([] if _values(args, "O", ("--output-document",), stop="oaPeiBtTwQUY") else ["."])
+    if name == "mktemp":
+        dirs = [a.split("=", 1)[1] for a in args if a.startswith("--tmpdir=")] + _values(args, "p")
+        names = _positionals(args, "p", ("--suffix",))
+        template = names[0] if names else "tmp.XXXXXXXXXX"
+        if dirs:
+            return [os.path.join(dirs[0], template)]
+        if not names or _short(args, "t") or "--tmpdir" in args:
+            return [os.path.join(os.environ.get("TMPDIR") or "/tmp", os.path.basename(template))]
+        return [template]
+    if name == "git":
+        return _git_landing(args)
+    if name in ("ed", "ex", "red", "vim", "vi", "nvim"):
+        return _positionals(args, "cS")
+    if handler in (_always, _compress, _sevenzip, _jar, _magick, _ffmpeg, _pdftotext, _two_files, _sass,
+                   _screencapture, _sips, _textutil, _plutil, _xattr, _exiftool):
+        # The files it is given, and the working folder when it is given none, as split reading stdin.
+        return positional + [a.partition("=")[2] for a in args if a.startswith("-") and "=" in a] or ["."]
+    return [UNKNOWN]
+
+
+def _git_landing(args):
+    """git changes the repository it runs in: the folder -C or --work-tree names, else the
+    working folder. git clone writes the folder it clones into."""
+    i, where = 0, []
+    while i < len(args) and (args[i].startswith("-") or args[i].startswith("$")):
+        if args[i] in ("-C", "--work-tree") and i + 1 < len(args):
+            where.append(args[i + 1])
+        elif args[i].startswith("--work-tree="):
+            where.append(args[i].split("=", 1)[1])
+        i += 2 if args[i] in GIT_VALUE_OPTIONS else 1
+    folder = os.path.join(*where) if where else "."
+    if i < len(args) and args[i] == "clone":
+        names = [a for a in args[i + 1:] if not a.startswith("-")]
+        return [os.path.join(folder, names[-1])] if len(names) > 1 else [folder]
+    return [folder]
 
 
 def _glob_reaches(path, pattern):
@@ -499,9 +780,21 @@ def _reads(c, name, args, simple, before):
 def _cd(c, name, args, simple, before):
     """Follow the working folder, which a touch check needs to resolve relative paths."""
     if c.cwd is not None:
-        where = [a for a in args if not a.startswith("-")]
+        where = [a for a in args if a == "-" or not a.startswith("-")]
         target = c.expand(where[0]) if where else "~"
-        c.cwd = os.path.normpath(os.path.join(c.cwd, os.path.expandvars(os.path.expanduser(target))))
+        if target == "-":
+            c.cwd = UNKNOWN_CWD  # the folder before the last cd, which this check does not keep
+        elif _windows(c.cwd) or _windows(target):
+            c.cwd = resolve_path(target, c.cwd) or UNKNOWN_CWD
+        else:
+            c.cwd = os.path.normpath(os.path.join(c.cwd, os.path.expandvars(os.path.expanduser(target))))
+    return ""
+
+
+def _popd(c, name, args, simple, before):
+    """popd goes back to a folder this check does not track."""
+    if c.cwd is not None:
+        c.cwd = UNKNOWN_CWD
     return ""
 
 
@@ -598,7 +891,9 @@ def _watch(c, name, args, simple, before):
 def _parallel(c, name, args, simple, before):
     i = _skip(args, "jSdIXa", ("--jobs", "--delimiter", "--sshlogin"))
     words = args[i:]
-    if c.touches is not None:
+    if isinstance(c.touches, _InScope):
+        words = [w for w in words if w not in (":::", "::::")] + [UNKNOWN]  # and what it reads at run time
+    elif c.touches is not None:
         words = [w for w in words if w not in (":::", "::::")] + (list(before.words) if before else [])
     else:
         words = words[:words.index(":::")] if ":::" in words else words
@@ -611,6 +906,10 @@ def _xargs(c, name, args, simple, before):
                                     "--process-slot-var"))
     if i >= len(args):
         return ""
+    if isinstance(c.touches, _InScope):
+        # The words xargs adds come at run time, and may be names relative to another folder,
+        # as with ls /tmp | xargs rm, so where they land is not known.
+        return c.run(args[i:] + [UNKNOWN], simple, None)
     if c.touches is not None and before is not None:
         # Put in the words xargs would add, so a touch check sees where they land.
         piped = list(before.words[1:])
@@ -657,7 +956,8 @@ def _find(c, name, args, simple, before):
 def _fd(c, name, args, simple, before):
     for i, a in enumerate(args):
         if a in ("-x", "--exec", "-X", "--exec-batch"):
-            return c.run(args[i + 1:], simple, None)
+            found = [UNKNOWN] if isinstance(c.touches, _InScope) else []  # the files fd finds
+            return c.run(args[i + 1:] + found, simple, None)
     return ""
 
 
@@ -1961,7 +2261,7 @@ for _program in ("rm", "rmdir", "mv", "cp", "ln", "link", "unlink", "mkdir", "to
                  "rsvg-convert", "gs", "tesseract"):
     HANDLERS[_program] = _always
 HANDLERS.update({
-    "cd": _cd, "pushd": _cd, "export": _assignments, "declare": _assignments, "typeset": _assignments,
+    "cd": _cd, "pushd": _cd, "popd": _popd, "export": _assignments, "declare": _assignments, "typeset": _assignments,
     "local": _assignments, "readonly": _assignments, "eval": _eval, "trap": _trap,
     "source": _reads, ".": _reads, "alias": _reads, "unalias": _reads,
     "sudo": _sudo, "doas": _wrapper("uC"), "nice": _wrapper("n", ("--adjustment",)),

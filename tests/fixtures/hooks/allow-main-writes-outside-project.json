@@ -1,0 +1,11 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "tests/fixtures/transcripts/builder-writes-outside-project.jsonl",
+  "cwd": "tests/fixtures/project",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "The draft is in /tmp/trail-notes/draft.md. I didn't change the project.",
+  "background_tasks": [],
+  "session_crons": []
+}

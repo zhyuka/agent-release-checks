@@ -98,6 +98,13 @@ def matches(agent, patterns):
     return any(fnmatch.fnmatchcase(agent.lower(), p.lower()) for p in patterns)
 
 
+def _where(event):
+    """(project root, working folder) for a hook input: the project is CLAUDE_PROJECT_DIR when
+    it is set, else the input's cwd."""
+    cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else ""
+    return os.environ.get("CLAUDE_PROJECT_DIR") or cwd or ".", cwd
+
+
 def label(agent):
     return "the main session" if agent == "main" else agent
 
@@ -139,7 +146,9 @@ def _deny_reviewer_write(event, config):
     elif tool == "Bash" and config["reviewer_shell"] == "block-all":
         reason = "runs a shell command, and reviewer_shell is block-all"
     else:
-        reason = readonly.writes(tool, tool_input)
+        # A write that lands only in a temp folder outside the project, such as notes in /tmp, is allowed.
+        project, cwd = _where(event)
+        reason = readonly.writes(tool, tool_input, readonly.reviewer_scope(project, cwd))
     if not reason:
         return None
     return {"hookSpecificOutput": {
@@ -160,10 +169,10 @@ RESULT_WAIT = 1.0  # how long to wait for a QA result Claude Code has not writte
 LOOK_BACK = 64 << 20
 
 
-def _verdict(calls, qa_commands, ran_before=False):
+def _verdict(calls, qa_commands, ran_before=False, scope=None):
     """step_ran.qa_ran() for calls, or None when nothing in calls wrote files. ran_before
     says whether a QA command ran before the first of calls, or is None when that is not known."""
-    written = step_ran.last_write(calls, qa_commands)
+    written = step_ran.last_write(calls, qa_commands, scope)
     if written < 0:
         return None
     return step_ran.qa_ran(calls, qa_commands, ran_before, written)
@@ -209,12 +218,17 @@ def _ran_before(transcript, call, qa_commands):
     return False if floor == 0 else None
 
 
-def stop_verdict(path, qa_commands, deadline):
+def stop_verdict(path, qa_commands, deadline, scope=None):
     """(verdict, waiting) for the transcript at path, read from the end.
 
     verdict is None when the agent wrote nothing. waiting is True when the newest QA run
-    after the last write has no result in the file yet, so a second look may find it."""
-    qa_status, wrote = step_ran.qa_status, step_ran.wrote
+    after the last write has no result in the file yet, so a second look may find it.
+    With a scope, only the writes that land where it counts are writes."""
+    qa_status = step_ran.qa_status
+
+    def wrote(call):
+        return step_ran.wrote(call, qa_commands, scope)
+
     with runlog.Transcript(path, deadline) as transcript:
         tail = []  # the calls after the one being looked at, newest first
         try:
@@ -226,21 +240,21 @@ def stop_verdict(path, qa_commands, deadline):
                         if _replayed(transcript, call):
                             raise _Replayed()
                         return step_ran.Verdict(True, "QA command passed after the last file write"), False
-                elif call.tool in readonly.WRITE_TOOLS or (call.tool in step_ran.SHELLS and wrote(call, qa_commands)):
+                elif wrote(call):
                     transcript.resolve(call)
-                    if wrote(call, qa_commands):
+                    if wrote(call):
                         calls = [call] + tail[::-1]
-                        verdict = _verdict(calls, qa_commands, _ran_before(transcript, call, qa_commands))
+                        verdict = _verdict(calls, qa_commands, _ran_before(transcript, call, qa_commands), scope)
                         newest = next((c for c in tail if qa_status(c, qa_commands)), None)
                         waiting = bool(newest and not newest.has_result and qa_status(newest, qa_commands) == "seen")
                         return verdict, waiting
                 tail.append(call)
         except _Replayed:
             calls = runlog.read_transcript(path, deadline)
-            return _verdict(calls, qa_commands), False
+            return _verdict(calls, qa_commands, scope=scope), False
         if transcript.calls_seen == 0 and (transcript.has_other_tool_use() or not transcript.holds_messages()):
             calls = runlog.read_transcript(path, deadline)  # raises when nothing in it is a message
-            return _verdict(calls, qa_commands), False
+            return _verdict(calls, qa_commands, scope=scope), False
         return None, False
 
 
@@ -277,18 +291,21 @@ def qa_before_done(event, config):
     if not qa_commands:
         return {"systemMessage": f"release-checks: the QA check did not run for {label(agent)}, because {problem}."}
     deadline = runlog.Deadline(STOP_SECONDS)
+    # Only writes inside the project need QA: notes in /tmp or ~/.claude don't. A write the
+    # command line does not place counts wherever it is.
+    scope = readonly.project_scope(*_where(event))
     try:
         if not isinstance(path, (str, os.PathLike)) or not str(path):
             raise TypeError("the hook input has no transcript path")
         path = os.path.expanduser(path)
-        verdict, waiting = stop_verdict(path, qa_commands, deadline)
+        verdict, waiting = stop_verdict(path, qa_commands, deadline, scope)
         waited = 0.0
         while waiting and waited < RESULT_WAIT:  # Claude Code writes the transcript asynchronously
             size = os.stat(path).st_size
             time.sleep(0.1)
             waited += 0.1
             if os.stat(path).st_size != size:
-                verdict, waiting = stop_verdict(path, qa_commands, deadline)
+                verdict, waiting = stop_verdict(path, qa_commands, deadline, scope)
     except (OSError, TypeError, ValueError, RecursionError, MemoryError) as err:
         return {"systemMessage": f"release-checks: the QA check did not run for {label(agent)}, "
                                  f"because its transcript could not be read ({err})."}

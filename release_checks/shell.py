@@ -25,13 +25,16 @@ class Simple:
     """One simple command: its words, its redirections, and the separator after it.
 
     split() also fills stdin with the heredoc bodies and here-strings the
-    command reads, as (text, expanded) pairs, and kind with "for", "case" or
-    "function" for a header that runs no program."""
+    command reads, as (text, expanded) pairs, kind with "for", "case" or
+    "function" for a header that runs no program, and group with the ids of
+    the ( ) subshells the command runs in, outermost first, so a cd inside
+    one can be kept from reaching the commands after it."""
     words: list
     redirects: list = field(default_factory=list)
     then: str = ""
     stdin: list = field(default_factory=list)
     kind: str = ""
+    group: tuple = ()
 
 
 def drop_heredocs(command):
@@ -101,6 +104,7 @@ class _Reader:
 
     def __init__(self, text, levels):
         self.s, self.i, self.levels = text, 0, levels
+        self.subshells = 0  # how many ( ) subshells it has opened, for their ids
 
     def at(self, k=0):
         j = self.i + k
@@ -360,11 +364,11 @@ class _Reader:
     def commands(self, stop=False):
         """Simple commands up to the end of the text, or with stop up to an unmatched ")"."""
         out, current, pending, case = [], Simple([]), [], []
-        depth, skip_name = 0, False
+        depth, skip_name, groups = 0, False, []
 
         def finish(then):
             nonlocal current
-            current.then = then
+            current.then, current.group = then, tuple(groups)
             if current.words or current.redirects or current.stdin:
                 out.append(current)
             elif out and then not in ("", ";"):
@@ -440,12 +444,17 @@ class _Reader:
                     continue
                 finish(";")
                 depth += 1
+                self.subshells += 1
+                groups.append(self.subshells)
                 continue
             if c == ")":
                 self.i += 1
                 if depth:
+                    finish(";")
                     depth -= 1
-                elif stop:
+                    groups.pop()
+                    continue
+                if stop:
                     finish("")
                     return out
                 finish(";")
