@@ -134,8 +134,8 @@ def writes(tool, tool_input):
     tool and tool_input use Claude Code's tool names and input fields.
     """
     if tool in WRITE_TOOLS:
-        target = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-        return f"{tool} {target}".strip()
+        target = tool_input.get("file_path") or tool_input.get("notebook_path") or "a file"
+        return f"writes {target}"
     if tool == "Bash":
         return command_writes(tool_input.get("command", ""))
     if tool == "PowerShell":

@@ -1,0 +1,16 @@
+{
+  "name": "zhyuka",
+  "description": "Claude Code plugins from github.com/zhyuka",
+  "owner": {
+    "name": "Derek Zhou",
+    "url": "https://github.com/zhyuka"
+  },
+  "plugins": [
+    {
+      "name": "agent-release-checks",
+      "source": "./",
+      "description": "Hooks that keep reviewer agents read-only and keep a builder from stopping until its QA command passes after its last edit.",
+      "category": "code-quality"
+    }
+  ]
+}

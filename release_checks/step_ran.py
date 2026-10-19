@@ -87,20 +87,27 @@ def qa_in_command(command, qa_commands):
     return ""
 
 
+def _qa_status(call, qa_commands):
+    return qa_in_command(call.input.get("command", ""), qa_commands) if call.tool == "Bash" else ""
+
+
+def last_write(calls, qa_commands):
+    """Index of the last call that wrote files, or -1. A QA command never counts as a write."""
+    return max((i for i, call in enumerate(calls)
+                if not _qa_status(call, qa_commands) and readonly.writes(call.tool, call.input)),
+               default=-1)
+
+
 def qa_ran(calls, qa_commands):
     """Accept a "QA passed" claim only if a QA command succeeded after the last file write.
 
     calls are tool calls in order, each with .tool, .input and .ok (True, False,
     or None when the result is unknown, such as a command run in the background).
     """
-    last_write, runs = -1, []
-    for i, call in enumerate(calls):
-        status = qa_in_command(call.input.get("command", ""), qa_commands) if call.tool == "Bash" else ""
-        if status:
-            runs.append((i, status, call))
-        elif readonly.writes(call.tool, call.input):
-            last_write = i
-    after = [(status, call) for i, status, call in runs if i > last_write]
+    runs = [(i, status, call) for i, call in enumerate(calls)
+            for status in [_qa_status(call, qa_commands)] if status]
+    written = last_write(calls, qa_commands)
+    after = [(status, call) for i, status, call in runs if i > written]
     names = " or ".join(repr(qa) for qa in qa_commands)
     if not runs:
         return Verdict(False, f"QA command {names} never ran")

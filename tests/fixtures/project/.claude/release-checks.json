@@ -1,0 +1,5 @@
+{
+  "reviewer_agents": ["*reviewer*"],
+  "builder_agents": ["main", "*builder*"],
+  "qa_commands": ["npm run check"]
+}

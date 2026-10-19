@@ -1,0 +1,17 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "tests/fixtures/transcripts/builder-no-qa.jsonl",
+  "cwd": "tests/fixtures/project",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git diff --stat 2>&1 | head -20",
+    "description": "Show what changed",
+    "timeout": 120000,
+    "run_in_background": false
+  },
+  "tool_use_id": "toolu_01ABC127",
+  "agent_id": "agent-def456",
+  "agent_type": "code-reviewer"
+}

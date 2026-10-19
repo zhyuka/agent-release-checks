@@ -1,0 +1,16 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "tests/fixtures/transcripts/builder-no-qa.jsonl",
+  "cwd": "tests/fixtures/project",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "prompt": "Check the alt text on every image",
+    "description": "Check alt text",
+    "subagent_type": "a11y-reviewer"
+  },
+  "tool_use_id": "toolu_01ABC128",
+  "agent_id": "agent-def456",
+  "agent_type": "code-reviewer"
+}

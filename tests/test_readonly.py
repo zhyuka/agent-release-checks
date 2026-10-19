@@ -90,7 +90,7 @@ class ReadOnlyTest(unittest.TestCase):
         self.assertEqual(command_writes("git -C x commit -m y"), "runs git commit")
 
     def test_tool_calls_that_write(self):
-        self.assertEqual(writes("Write", {"file_path": "/p/a.html", "content": "x"}), "Write /p/a.html")
+        self.assertEqual(writes("Write", {"file_path": "/p/a.html", "content": "x"}), "writes /p/a.html")
         self.assertTrue(writes("Edit", {"file_path": "/p/a.html"}))
         self.assertTrue(writes("NotebookEdit", {"notebook_path": "/p/a.ipynb"}))
         self.assertTrue(writes("PowerShell", {"command": "Get-ChildItem"}))

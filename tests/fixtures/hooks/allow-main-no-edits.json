@@ -1,0 +1,11 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "tests/fixtures/transcripts/reads-only.jsonl",
+  "cwd": "tests/fixtures/project",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "index.html has one h1 and two h2 headings.",
+  "background_tasks": [],
+  "session_crons": []
+}

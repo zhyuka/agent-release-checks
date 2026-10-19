@@ -1,0 +1,14 @@
+{
+  "name": "agent-release-checks",
+  "displayName": "Agent release checks",
+  "version": "0.2.0",
+  "description": "Hooks that keep reviewer agents read-only and keep a builder from stopping until its QA command passes after its last edit.",
+  "author": {
+    "name": "Derek Zhou",
+    "url": "https://github.com/zhyuka"
+  },
+  "homepage": "https://github.com/zhyuka/agent-release-checks",
+  "repository": "https://github.com/zhyuka/agent-release-checks",
+  "license": "MIT",
+  "keywords": ["hooks", "code-review", "qa", "release", "subagents"]
+}

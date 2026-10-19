@@ -1,0 +1,15 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "tests/fixtures/transcripts/builder-no-qa.jsonl",
+  "cwd": "tests/fixtures/project",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/home/user/my-project/build/index.html",
+    "content": "<main><h1>Trail notes</h1></main>"
+  },
+  "tool_use_id": "toolu_01ABC129",
+  "agent_id": "agent-0a1b2c",
+  "agent_type": "page-builder"
+}

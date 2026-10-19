@@ -1,0 +1,16 @@
+{
+  "session_id": "abc123",
+  "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+  "transcript_path": "tests/fixtures/transcripts/builder-no-qa.jsonl",
+  "cwd": "tests/fixtures/project",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/home/user/my-project/REVIEW_NOTES.md",
+    "content": "Looks fine."
+  },
+  "tool_use_id": "toolu_01ABC123",
+  "agent_id": "agent-def456",
+  "agent_type": "code-reviewer"
+}

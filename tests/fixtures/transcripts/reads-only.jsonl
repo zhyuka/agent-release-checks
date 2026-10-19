@@ -1,0 +1,6 @@
+{"type":"user","isSidechain":false,"uuid":"u-01","sessionId":"abc123","message":{"role":"user","content":"How many headings does build/index.html have?"}}
+{"type":"assistant","isSidechain":false,"uuid":"a-01","sessionId":"abc123","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_31","name":"Read","input":{"file_path":"/home/user/my-project/build/index.html"}}]}}
+{"type":"user","isSidechain":false,"uuid":"u-02","sessionId":"abc123","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_31","content":"1\t<main><h1>Trail notes</h1><h2>This week</h2><h2>Gear</h2></main>"}]}}
+{"type":"assistant","isSidechain":false,"uuid":"a-02","sessionId":"abc123","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_32","name":"Bash","input":{"command":"grep -c '<h' build/index.html","description":"Count headings"}}]}}
+{"type":"user","isSidechain":false,"uuid":"u-03","sessionId":"abc123","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_32","content":"3","is_error":false}]}}
+{"type":"assistant","isSidechain":false,"uuid":"a-03","sessionId":"abc123","message":{"role":"assistant","content":[{"type":"text","text":"index.html has one h1 and two h2 headings."}]}}

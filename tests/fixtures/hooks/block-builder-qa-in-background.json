@@ -1,0 +1,14 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "tests/fixtures/transcripts/reads-only.jsonl",
+  "cwd": "tests/fixtures/project",
+  "permission_mode": "default",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "agent-0a1b2d",
+  "agent_type": "page-builder",
+  "agent_transcript_path": "tests/fixtures/transcripts/builder-qa-background.jsonl",
+  "last_assistant_message": "QA is running and will pass.",
+  "background_tasks": [],
+  "session_crons": []
+}
