@@ -1,5 +1,7 @@
 # Agent release checks
 
+[![tests](https://github.com/zhyuka/agent-release-checks/actions/workflows/tests.yml/badge.svg)](https://github.com/zhyuka/agent-release-checks/actions/workflows/tests.yml)
+
 This repo shows three ways coding agents failed at release time in my work, each as a small runnable check. I only trust a check after it catches a planted bad case and passes a known-good one.
 
 The code is a fresh reimplementation with stub agents, not the original system. Each "agent" here is a small deterministic Python function standing in for a real one. No LLM calls, no network, no dependencies. Tested with Python 3.13.
