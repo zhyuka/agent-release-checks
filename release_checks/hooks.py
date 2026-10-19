@@ -2,7 +2,8 @@
 
 hooks/reviewer_readonly.py runs on PreToolUse. It denies any call that writes
 files when the acting agent is a reviewer, and denies a reviewer spawning a
-subagent that is not a reviewer.
+subagent that is not a reviewer. For every agent, it asks the user before a
+call that writes the config file below, since changing it can turn the checks off.
 
 hooks/qa_before_done.py runs on Stop and SubagentStop. It blocks a builder
 from stopping when the transcript shows a file write after the last QA
@@ -70,9 +71,33 @@ def label(agent):
 
 
 def reviewer_readonly(event, config):
-    """PreToolUse output that denies a reviewer's write, or None to leave the call alone."""
+    """PreToolUse output that denies a reviewer's write, or asks the user before
+    any agent changes the release-checks config, or None to leave the call alone."""
+    if event.get("hook_event_name") != "PreToolUse":
+        return None
+    return _deny_reviewer_write(event, config) or _ask_before_config_change(event)
+
+
+def _ask_before_config_change(event):
+    """Any agent that writes the project's config could turn the checks off, so the user decides."""
+    tool, tool_input = event.get("tool_name", ""), event.get("tool_input") or {}
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "."
+    path = os.path.join(os.path.abspath(project), str(CONFIG))
+    reason = readonly.touch_check(tool, tool_input, path, event.get("cwd") or project)
+    if not reason:
+        return None
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": (
+            f"release-checks: this {tool} call {reason}, which changes {CONFIG.as_posix()}. That "
+            "file sets who counts as a reviewer or a builder and which QA commands must pass, so "
+            "changing it can turn the release checks off or change them. It needs your OK.")}}
+
+
+def _deny_reviewer_write(event, config):
     agent = event.get("agent_type") or "main"
-    if event.get("hook_event_name") != "PreToolUse" or not matches(agent, config["reviewer_agents"]):
+    if not matches(agent, config["reviewer_agents"]):
         return None
     tool, tool_input = event.get("tool_name", ""), event.get("tool_input") or {}
     if tool == "Agent":
