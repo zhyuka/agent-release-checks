@@ -1,0 +1,11 @@
+{
+  "session_id": "abc123",
+  "transcript_path": "tests/fixtures/transcripts/builder-failed-edit-after-qa.jsonl",
+  "cwd": "tests/fixtures/project",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "The page is built and npm run check passed. The heading was already right.",
+  "background_tasks": [],
+  "session_crons": []
+}
