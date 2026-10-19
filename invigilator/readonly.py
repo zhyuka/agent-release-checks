@@ -332,22 +332,21 @@ class _Checker:
                     return reason
         if simple.kind or not simple.words:
             return ""
-        words, i = simple.words, 0
+        words, i, env = simple.words, 0, {}
         while i < len(words) and ASSIGN.fullmatch(words[i]):
             name, value = ASSIGN.fullmatch(words[i]).groups()
+            env[name] = value
             if name in COMMAND_VARIABLES and value.strip() and i < len(words) - 1:
                 reason = self.nested(value, f"through {name}")
                 if reason:
                     return reason
             i += 1
         if i == len(words):
-            for word in words:
-                name, value = ASSIGN.fullmatch(word).groups()
-                self.vars[name] = value
+            self.vars.update(env)
             return ""
-        return self.run(list(words[i:]), simple, before)
+        return self.run(list(words[i:]), simple, before, env)
 
-    def run(self, words, simple, before):
+    def run(self, words, simple, before, env=None):
         """Why one program with its arguments writes files, or ""."""
         for _ in range(4):
             if not words:
@@ -367,7 +366,7 @@ class _Checker:
         if not reason or self.touches is None or isinstance(reason, _Inner):
             return reason
         if isinstance(self.touches, _InScope):
-            return _Inner(self.hit(reason, *_landing(name, args)))
+            return _Inner(self.hit(reason, *_landing(name, args, dict(self.vars, **(env or {})), self.cwd)))
         # Mark it checked, so a wrapper such as sudo or xargs does not check it again on its own words.
         return _Inner(self.hit(reason, *self.narrow(name, args, words, before)))
 
@@ -525,11 +524,20 @@ def _inside(path, roots):
 
 def in_temp(path):
     """Whether a resolved path is in a temp folder: /tmp, /var/folders, $TMPDIR, %TEMP%,
-    or a user's AppData\\Local\\Temp. Every form of it has to be, symlinks resolved too."""
+    or a user's AppData\\Local\\Temp. Every form of it has to be, with symlinks in it and
+    its parents resolved (os.path.realpath, inside _variants). An existing file with more
+    than one hard link may share its bytes with a file outside temp, so it is not temp-only."""
     roots = list(TEMP_ROOTS) + [v for v in (os.environ.get(n) for n in ("TMPDIR", "TEMP", "TMP"))
                                 if v and (v.startswith("/") or _windows(v))]
-    return all(any(_under(v, r) for r in roots) or (_windows(v) and WINDOWS_TEMP.match(_key(v)))
-               for v in _variants(path))
+    if not all(any(_under(v, r) for r in roots) or (_windows(v) and WINDOWS_TEMP.match(_key(v)))
+               for v in _variants(path)):
+        return False
+    try:
+        if os.path.isfile(path) and os.stat(path).st_nlink > 1:
+            return False
+    except (OSError, ValueError):
+        pass
+    return True
 
 
 def _roots(project):
@@ -578,9 +586,19 @@ MODE_FIRST = {"chmod", "chown", "chgrp", "chflags", "chattr", "setfacl"}  # chmo
 COPIERS = {"cp", "gcp", "install", "ditto", "scp", "rsync", "mv", "gmv"}
 
 
-def _landing(name, args):
+def _links(name, args):
+    """True when cp makes a hard or symbolic link instead of a copy, so the source stays
+    reachable through it: cp -l, cp -s, cp --link or cp --symbolic-link."""
+    return name in ("cp", "gcp") and (_short(args, "ls") or bool({"--link", "--symbolic-link"} & set(args)))
+
+
+def _landing(name, args, env=None, cwd=None):
     """Where a write by this program lands, as path texts. UNKNOWN stands for a place the
-    command line does not show, such as what a build step or a package install writes."""
+    command line does not show, such as what a build step or a package install writes.
+
+    A path the write can reach counts too: the source of a link, the source a move or an
+    archiver removes, and the git dir, work tree, index and working folder of a git write.
+    env holds the command's own VAR=value words, for GIT_DIR and the like; cwd is where it runs."""
     positional = _positionals(args)
     handler = HANDLERS.get(name)
     if name in PATH_ARGUMENTS:
@@ -592,9 +610,15 @@ def _landing(name, args):
         dest = target[0] if target else (positional[-1] if positional else "")
         sources = positional if target else positional[:-1]
         landed = [dest] + [os.path.join(dest, os.path.basename(s.rstrip("/"))) for s in sources if dest]
-        return landed + (sources if name in ("mv", "gmv") else [])  # mv also takes the source away
+        # mv and rsync --remove-source-files take the source away; cp -l/-s leaves it reachable
+        # through the link. Either way a write to the copy, or the move, changes the source.
+        takes_source = name in ("mv", "gmv") or _links(name, args) \
+            or (name == "rsync" and "--remove-source-files" in args)
+        return landed + (sources if takes_source else [])
     if name in ("ln", "gln", "link"):
-        return _values(args, "t", ("--target-directory",)) or positional[-1:]
+        # The link and its source both count: a hard link shares the source's bytes, and a
+        # write through a symlink lands on the source.
+        return _values(args, "t", ("--target-directory",)) + positional
     if name == "dd":
         return [a[3:] for a in args if a.startswith("of=")]
     if name in ("sort", "gsort"):
@@ -634,7 +658,9 @@ def _landing(name, args):
         archive = _values(args, "f", ("--file",))
         if not archive and args and not args[0].startswith("-") and "f" in args[0]:
             archive = args[1:2]
-        return archive or [UNKNOWN]
+        removed = [p for p in _positionals(args, "", ("--directory",)) if p not in archive] \
+            if "--remove-files" in args else []  # --remove-files deletes the files it archived
+        return (archive or [UNKNOWN]) + removed
     if name == "unzip":
         return _values(args, "d") or ["."]
     if name == "curl":
@@ -658,7 +684,7 @@ def _landing(name, args):
             return [os.path.join(os.environ.get("TMPDIR") or "/tmp", os.path.basename(template))]
         return [template]
     if name == "git":
-        return _git_landing(args)
+        return _git_landing(args, env, cwd)
     if name in ("ed", "ex", "red", "vim", "vi", "nvim"):
         return _positionals(args, "cS")
     if handler in (_always, _compress, _sevenzip, _jar, _magick, _ffmpeg, _pdftotext, _two_files, _sass,
@@ -668,21 +694,45 @@ def _landing(name, args):
     return [UNKNOWN]
 
 
-def _git_landing(args):
-    """git changes the repository it runs in: the folder -C or --work-tree names, else the
-    working folder. git clone writes the folder it clones into."""
-    i, where = 0, []
-    while i < len(args) and (args[i].startswith("-") or args[i].startswith("$")):
-        if args[i] in ("-C", "--work-tree") and i + 1 < len(args):
-            where.append(args[i + 1])
-        elif args[i].startswith("--work-tree="):
-            where.append(args[i].split("=", 1)[1])
-        i += 2 if args[i] in GIT_VALUE_OPTIONS else 1
-    folder = os.path.join(*where) if where else "."
-    if i < len(args) and args[i] == "clone":
-        names = [a for a in args[i + 1:] if not a.startswith("-")]
-        return [os.path.join(folder, names[-1])] if len(names) > 1 else [folder]
-    return [folder]
+def _git_landing(args, env=None, cwd=None):
+    """Where a git write lands. A git write changes the repository's git dir and the files in
+    its work tree, so both count, along with the index and the effective working folder. The
+    git dir comes from --git-dir or GIT_DIR, the work tree from --work-tree or GIT_WORK_TREE,
+    the index from GIT_INDEX_FILE, and -C moves the folder the rest resolve against. git clone
+    writes the folder it clones into."""
+    env = env or {}
+    chdir, worktree, gitdir = [], [], []
+    index = [env["GIT_INDEX_FILE"]] if env.get("GIT_INDEX_FILE") else []
+    if env.get("GIT_WORK_TREE"):
+        worktree.append(env["GIT_WORK_TREE"])
+    if env.get("GIT_DIR"):
+        gitdir.append(env["GIT_DIR"])
+    i, sub, rest = 0, "", []
+    while i < len(args):
+        a = args[i]
+        if a == "-C" and i + 1 < len(args):
+            chdir.append(args[i + 1])
+        elif a == "--work-tree" and i + 1 < len(args):
+            worktree.append(args[i + 1])
+        elif a.startswith("--work-tree="):
+            worktree.append(a.split("=", 1)[1])
+        elif a == "--git-dir" and i + 1 < len(args):
+            gitdir.append(args[i + 1])
+        elif a.startswith("--git-dir="):
+            gitdir.append(a.split("=", 1)[1])
+        elif a.startswith("-") or a.startswith("$"):
+            pass
+        else:
+            sub, rest = a, args[i + 1:]
+            break
+        i += 2 if a in GIT_VALUE_OPTIONS else 1
+    base = os.path.join(*chdir) if chdir else "."
+    work = os.path.join(base, worktree[-1]) if worktree else base
+    if sub == "clone":
+        names = [a for a in rest if not a.startswith("-")]
+        return [os.path.join(work, names[-1]) if len(names) > 1 else (names[-1] if names else work)]
+    repo = os.path.join(base, gitdir[-1]) if gitdir else os.path.join(work, ".git")
+    return [work, repo] + index
 
 
 def _glob_reaches(path, pattern):
@@ -2254,6 +2304,13 @@ def _rsync(c, name, args, simple, before):
     return "runs rsync"
 
 
+def _mount(c, name, args, simple, before):
+    """mount or bindfs that names a source or a target can expose a folder outside temp under a
+    temp path, so a write there would reach it. A bare mount only lists. The landing is unknown,
+    so a scoped check denies it wherever the command line points."""
+    return f"runs {name}" if _positionals(args) else ""
+
+
 HANDLERS = {}
 for _program in ("rm", "rmdir", "mv", "cp", "ln", "link", "unlink", "mkdir", "touch", "chmod", "chown",
                  "chgrp", "chflags", "chattr", "setfacl", "truncate", "shred", "install", "mkfifo", "mknod",
@@ -2286,7 +2343,7 @@ HANDLERS.update({
     "dd": _dd, "tee": _tee, "sort": _sort, "gsort": _sort, "uniq": _uniq, "patch": _patch,
     "gpatch": _patch, "mktemp": _mktemp, "base64": _base64, "xxd": _xxd, "iconv": _iconv,
     "crontab": _crontab, "ed": _editor, "ex": _editor, "red": _editor, "vim": _editor, "vi": _editor,
-    "nvim": _editor, "rsync": _rsync,
+    "nvim": _editor, "rsync": _rsync, "mount": _mount, "bindfs": _mount, "mount_nullfs": _mount,
     "tar": _tar, "gtar": _tar, "bsdtar": _tar, "unzip": _unzip, "jar": _jar, "7z": _sevenzip,
     "7za": _sevenzip, "7zz": _sevenzip, "rar": _sevenzip, "unrar": _sevenzip,
     "curl": _curl, "wget": _wget, "sed": _sed, "gsed": _sed, "perl": _perl,

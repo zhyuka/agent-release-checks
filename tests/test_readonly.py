@@ -229,6 +229,71 @@ class ReviewerScopeTest(unittest.TestCase):
         self.assertFalse(reviewer_denies("touch C:/Users/me/AppData/Local/Temp/a", cwd=project, project=project))
         self.assertTrue(reviewer_denies("touch C:/Users/me/AppData/Roaming/a", cwd=project, project=project))
 
+    def test_a_link_to_a_source_outside_temp_is_denied(self):
+        # The link lands in temp, but its source is in the project: a hard link shares the project
+        # file's bytes and a write through a symlink lands on it.
+        denied = ["ln -s README.md /tmp/x", "ln README.md /tmp/h", 'ln -s "$PWD/README.md" /tmp/y',
+                  "ln -t /tmp src/a.js", "ln -s /work/site/a /tmp/b"]
+        self.assertEqual([c for c in denied if not reviewer_denies(c)], [])
+        # A link whose source is also in temp stays allowed.
+        self.assertFalse(reviewer_denies("ln -s /tmp/a /tmp/b"))
+        self.assertFalse(reviewer_denies("ln -t /tmp /private/tmp/a"))
+
+    def test_cp_that_makes_a_link_is_denied(self):
+        denied = ["cp -l README.md /tmp/c", 'cp -s "$PWD/README.md" /tmp/s', "cp --link README.md /tmp/c",
+                  "cp --symbolic-link src/a.js /tmp/a", "cp -s --remove-destination src/a.js /tmp/a"]
+        self.assertEqual([c for c in denied if not reviewer_denies(c)], [])
+        # A plain copy only reads the source, so copying a project file into temp is allowed.
+        self.assertFalse(reviewer_denies("cp README.md /tmp/c"))
+        self.assertFalse(reviewer_denies("cp --remove-destination README.md /tmp/c"))
+
+    def test_a_move_or_archive_that_removes_the_source_is_denied(self):
+        denied = ["rsync --remove-source-files README.md /tmp/", "mv README.md /tmp/",
+                  "tar -cf /tmp/a.tar --remove-files README.md", "tar --remove-files -cf /tmp/a.tar src/a.js",
+                  "zip -m /tmp/a.zip README.md"]
+        self.assertEqual([c for c in denied if not reviewer_denies(c)], [])
+        # Archiving or syncing a project file into temp without removing it only reads the source.
+        self.assertFalse(reviewer_denies("tar -cf /tmp/a.tar README.md"))
+        self.assertFalse(reviewer_denies("rsync README.md /tmp/"))
+
+    def test_git_repository_outside_temp_is_denied(self):
+        denied = ["git --git-dir=/work/site/.git --work-tree=/tmp/w checkout -- .",
+                  "GIT_DIR=/work/site/.git git --work-tree=/tmp/w checkout .",
+                  "git worktree add /tmp/w", "cd /tmp && git --git-dir=/work/site/.git checkout ."]
+        self.assertEqual([c for c in denied if not reviewer_denies(c)], [])
+        # The git dir, work tree and working folder all in temp: a temp-only repository write.
+        allowed = ["git -C /tmp/w --git-dir=.git checkout .", "git clone . /tmp/w",
+                   "cd /tmp/w && git --git-dir=.git --work-tree=. checkout .",
+                   "GIT_DIR=/tmp/w/.git git --work-tree=/tmp/w checkout ."]
+        self.assertEqual([c for c in allowed if reviewer_denies(c)], [])
+
+    def test_mount_and_bindfs_count_as_writes(self):
+        self.assertTrue(command_writes("bindfs /work/site /tmp/m"))
+        self.assertTrue(command_writes("mount -t bindfs /work/site /tmp/m"))
+        self.assertEqual(command_writes("mount"), "")  # a bare mount only lists
+        self.assertTrue(reviewer_denies("bindfs /work/site /tmp/m"))
+
+    @unittest.skipIf(os.name == "nt", "needs hard links")
+    def test_an_existing_hard_linked_temp_target_is_denied(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+            a, b, c = (os.path.join(tmp, n) for n in ("a", "b", "c"))
+            with open(a, "w") as fh:
+                fh.write("x")
+            os.link(a, b)  # a and b now share one inode, so st_nlink is 2
+            self.assertTrue(reviewer_denies(f"echo hi > {a}"))
+            self.assertTrue(writes("Write", {"file_path": a}, reviewer_scope(PROJECT, PROJECT)))
+            # A fresh temp file with a single link stays allowed.
+            self.assertFalse(reviewer_denies(f"echo hi > {c}"))
+
+    @unittest.skipIf(os.name == "nt", "needs symlinks")
+    def test_a_temp_symlink_whose_target_is_the_project_is_denied(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as other, tempfile.TemporaryDirectory() as project:
+            link = os.path.join(other, "p")
+            os.symlink(project, link)  # a temp symlink that resolves to the project folder
+            self.assertTrue(reviewer_denies(f"cd {link} && echo hi > x", cwd=project, project=project))
+            self.assertTrue(reviewer_denies(f"echo hi > {link}/x", cwd=project, project=project))
+            self.assertFalse(reviewer_denies(f"echo hi > {other}/x", cwd=project, project=project))
+
 
 if __name__ == "__main__":
     unittest.main()
