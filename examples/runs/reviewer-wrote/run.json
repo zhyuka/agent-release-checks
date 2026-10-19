@@ -1,0 +1,10 @@
+{
+  "agent": "code-reviewer",
+  "role": "reviewer",
+  "build": "../../builds/good",
+  "tool_calls": [
+    {"tool": "Read", "input": {"file_path": "build/index.html"}},
+    {"tool": "Grep", "input": {"pattern": "TODO", "path": "build"}},
+    {"tool": "Bash", "input": {"command": "echo 'Looks fine.' > REVIEW_NOTES.md"}}
+  ]
+}

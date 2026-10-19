@@ -13,6 +13,39 @@ python -m unittest discover -s tests
 
 The demo exits non-zero if any check fails calibration.
 
+## Check your own run
+
+```
+pip install git+https://github.com/zhyuka/agent-release-checks
+release-checks check path/to/folder
+```
+
+The folder is either a build folder or a run folder. A run folder holds a `run.json` that records one agent run, and optionally an `artifacts/qa_report.json` in the format `release_checks/step_ran.py` writes:
+
+```json
+{
+  "agent": "page-builder",
+  "role": "builder",
+  "build": "build",
+  "claims": ["QA passed"],
+  "qa_commands": ["npm run check"],
+  "tool_calls": [
+    {"tool": "Write", "input": {"file_path": "build/index.html"}},
+    {"tool": "Bash", "input": {"command": "npm run check"}, "ok": true}
+  ]
+}
+```
+
+`role` is `builder` or `reviewer` and is the only required field. `build` is the build folder, relative to `run.json`, and defaults to `build`. `tool_calls` use Claude Code's tool names and input fields. `ok` is `false` for a failed call and `null` when the result is unknown. A reviewer run can add `build_sha256_before`, the build's hash before the review. `examples/runs/` has one passing and one failing run per check.
+
+The command runs three checks and prints pass, fail or skip for each, with the reason.
+
+- **build score.** The guarded score of the build has to exist and reach 0.75.
+- **read-only.** For a reviewer, no tool call may write files, and the build hash has to match `build_sha256_before` when it is given.
+- **step ran.** A "QA passed" claim needs evidence. That is a QA report that names this build, or a QA command that succeeded after the last file write with its exit code not hidden by a pipe or `|| true`. Every piece of evidence given has to hold, and a claim with none fails.
+
+A check with nothing to read is skipped and says why. It never counts as a pass. The exit code is 0 when no check failed, 1 when one did, and 2 when the input can't be read.
+
 ## 1. An empty build passes most rules
 
 In my work, a rule-based scorer gave an empty folder 0.66, higher than six real builds. Most rules said "the build did not do X", and a build with no code never does X.

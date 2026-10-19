@@ -5,9 +5,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_checks.step_ran import REPORT, build_sha256, cheap_agent, qa_agent, trial, verify
+from release_checks.runlog import ToolCall
+from release_checks.step_ran import (REPORT, build_sha256, cheap_agent, qa_agent, qa_in_command,
+                                     qa_ran, trial, verify)
 
 GOOD = Path(__file__).resolve().parent.parent / "examples" / "builds" / "good"
+QA = ["npm run check"]
+
+
+def write(path="build/index.html"):
+    return ToolCall("Write", {"file_path": path})
+
+
+def bash(command, ok=True, **extra):
+    return ToolCall("Bash", {"command": command, **extra}, ok)
 
 
 class StepRanTest(unittest.TestCase):
@@ -52,6 +63,48 @@ class StepRanTest(unittest.TestCase):
         self.assertTrue(verify("QA passed", self.build, self.artifacts).accepted)
         (self.build / "app.js").write_text("// changed after QA\n")
         self.assertFalse(verify("QA passed", self.build, self.artifacts).accepted)
+
+
+class QaRanTest(unittest.TestCase):
+    def test_qa_after_the_last_write_is_accepted(self):
+        verdict = qa_ran([write(), bash("npm run check")], QA)
+        self.assertEqual(verdict.reason, "QA command passed after the last file write")
+        self.assertTrue(verdict.accepted)
+
+    def test_no_qa_is_rejected(self):
+        self.assertEqual(qa_ran([write()], QA).reason, "QA command 'npm run check' never ran")
+
+    def test_qa_before_the_last_write_is_rejected(self):
+        verdict = qa_ran([write(), bash("npm run check"), write("build/app.js")], QA)
+        self.assertIn("before the last file write", verdict.reason)
+
+    def test_failed_qa_is_rejected(self):
+        self.assertFalse(qa_ran([write(), bash("npm run check", ok=False)], QA).accepted)
+
+    def test_a_later_pass_counts_after_a_failure(self):
+        calls = [write(), bash("npm run check", ok=False), bash("npm run check")]
+        self.assertTrue(qa_ran(calls, QA).accepted)
+
+    def test_masked_exit_codes_do_not_count(self):
+        for command in ("npm run check | tail -5", "npm run check || true", "npm run check; echo done",
+                        "npm run check &"):
+            verdict = qa_ran([write(), bash(command)], QA)
+            self.assertFalse(verdict.accepted, command)
+        self.assertIn("exit code was not seen", qa_ran([write(), bash("npm run check | tail")], QA).reason)
+
+    def test_unknown_result_does_not_count(self):
+        verdict = qa_ran([write(), bash("npm run check", ok=None, run_in_background=True)], QA)
+        self.assertEqual(verdict.reason, "QA command ran but its result was not recorded")
+
+    def test_only_the_command_itself_counts(self):
+        self.assertEqual(qa_in_command("echo npm run check", QA), "")
+        self.assertEqual(qa_in_command("grep 'npm run check' notes.md", QA), "")
+        self.assertEqual(qa_in_command("CI=1 npm run check -- --fast", QA), "seen")
+        self.assertEqual(qa_in_command("npm run build && npm run check", QA), "seen")
+        self.assertEqual(qa_in_command("npm run check 2>&1 > qa.log", QA), "seen")
+
+    def test_a_qa_command_is_not_a_write(self):
+        self.assertTrue(qa_ran([write(), bash("npm run check > qa.log")], QA).accepted)
 
 
 if __name__ == "__main__":

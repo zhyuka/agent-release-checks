@@ -1,0 +1,2 @@
+# Example builds are hashed byte for byte (examples/runs/reviewer-read-only/run.json).
+examples/** -text

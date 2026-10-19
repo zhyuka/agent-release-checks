@@ -1,0 +1,15 @@
+{
+  "agent": "page-builder",
+  "role": "builder",
+  "build": "../../builds/good",
+  "claims": ["QA passed"],
+  "qa_commands": ["npm run check"],
+  "tool_calls": [
+    {"tool": "Read", "input": {"file_path": "src/notes.md"}},
+    {"tool": "Write", "input": {"file_path": "build/index.html"}},
+    {"tool": "Edit", "input": {"file_path": "build/styles.css"}},
+    {"tool": "Bash", "input": {"command": "npm run check"}, "ok": false},
+    {"tool": "Edit", "input": {"file_path": "build/index.html"}},
+    {"tool": "Bash", "input": {"command": "npm run check"}, "ok": true}
+  ]
+}

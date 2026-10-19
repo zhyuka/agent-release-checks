@@ -1,8 +1,12 @@
-"""python -m release_checks demo"""
+"""release-checks demo | release-checks check <folder>
+
+Also runs as python -m release_checks.
+"""
 import argparse
+import sys
 from pathlib import Path
 
-from . import calibrate, readonly, step_ran, vacuous
+from . import calibrate, check, readonly, runlog, step_ran, vacuous
 
 BUILDS = Path(__file__).resolve().parent.parent / "examples" / "builds"
 
@@ -69,11 +73,41 @@ def demo_calibration():
     return ok == len(results)
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(prog="python -m release_checks")
-    parser.add_argument("command", choices=["demo"])
-    parser.parse_args(argv)
+def demo():
+    if not BUILDS.is_dir():
+        print(f"release-checks: the demo reads {BUILDS}, which only exists in a clone of the repo",
+              file=sys.stderr)
+        return 2
     for part in (demo_vacuous, demo_readonly, demo_step_ran):
         part()
         print()
     return 0 if demo_calibration() else 1
+
+
+def run_check(folder):
+    """Exit 0 when no check failed, 1 when one did, 2 when the input is unusable."""
+    try:
+        results = check.check_folder(folder)
+    except runlog.RunLogError as err:
+        print(f"release-checks: {err}", file=sys.stderr)
+        return 2
+    print(f"Release checks for {folder}")
+    table(["check", "result", "detail"], [(r.check, r.status, r.detail) for r in results])
+    ran = [r for r in results if r.status != "skip"]
+    failed = [r for r in ran if r.status == "fail"]
+    print(f"  {len(ran)} of {len(results)} checks ran: "
+          f"{len(ran) - len(failed)} passed, {len(failed)} failed.")
+    return 1 if failed else 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="release-checks",
+                                     description="Release checks for agent-built software.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("demo", help="run the stub-agent demo and calibration")
+    folder = commands.add_parser("check", help="run the checks on a build folder or a run folder")
+    folder.add_argument("folder", help="a build folder, or a run folder with a run.json")
+    args = parser.parse_args(argv)
+    if args.command == "check":
+        return run_check(args.folder)
+    return demo()

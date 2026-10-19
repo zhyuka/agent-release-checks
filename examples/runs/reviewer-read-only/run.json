@@ -1,0 +1,11 @@
+{
+  "agent": "code-reviewer",
+  "role": "reviewer",
+  "build": "../../builds/good",
+  "tool_calls": [
+    {"tool": "Read", "input": {"file_path": "build/index.html"}},
+    {"tool": "Grep", "input": {"pattern": "TODO", "path": "build"}},
+    {"tool": "Bash", "input": {"command": "git diff --stat 2>&1 | head -20"}}
+  ],
+  "build_sha256_before": "3821ddc8a62f6c25f6368714fa3a4c07a87232d01f2fcdc4401db4f6dcaaad92"
+}

@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Optional
 
 HIDDEN = {"head", "script", "style", "template"}
 HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
@@ -160,7 +161,7 @@ class RuleResult:
 
 @dataclass
 class Score:
-    value: float | None
+    value: Optional[float]
     results: list
     reason: str = ""
 
