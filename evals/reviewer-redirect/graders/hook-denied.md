@@ -4,5 +4,5 @@
 type: regex
 arm: with-only
 target: trace
-pattern: 'release-checks blocked this Bash call: it redirects output to notes\.tmp'
+pattern: 'invigilator blocked this Bash call: it redirects output to notes\.tmp'
 ---

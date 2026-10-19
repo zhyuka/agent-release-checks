@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_checks.runlog import read_transcript
+from invigilator.runlog import read_transcript
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -110,7 +110,7 @@ class HookConfigTest(unittest.TestCase):
 
     def configure(self, text):
         (self.project / ".claude").mkdir(exist_ok=True)
-        (self.project / ".claude" / "release-checks.json").write_text(text)
+        (self.project / ".claude" / "invigilator.json").write_text(text)
 
     def test_without_a_config_reviewers_are_still_read_only_and_qa_is_off(self):
         self.assertEqual(outcome(run_hook(READONLY, fixture("deny-reviewer-write"), self.project)[1]), "deny")

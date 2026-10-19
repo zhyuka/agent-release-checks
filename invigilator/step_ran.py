@@ -5,7 +5,7 @@ and is not older than that build.
 
 For a real agent run, qa_ran() reads the tool calls instead: the QA command
 has to succeed after the agent's last file write. wrote() says which calls
-count as writes. The release-checks command uses it on a run.json, and the
+count as writes. The invigilator command uses it on a run.json, and the
 Stop hook on a session transcript.
 """
 import hashlib

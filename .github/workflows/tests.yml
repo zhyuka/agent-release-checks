@@ -38,22 +38,22 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Demo
-        run: python -m release_checks demo
+        run: python -m invigilator demo
 
       - name: Install and check the example runs
         run: |
           python -m pip install .
-          release-checks check examples/runs/qa-builder
-          release-checks check examples/runs/reviewer-read-only
-          if release-checks check examples/runs/cheap-builder; then exit 1; fi
-          if release-checks check examples/runs/reviewer-wrote; then exit 1; fi
+          invigilator check examples/runs/qa-builder
+          invigilator check examples/runs/reviewer-read-only
+          if invigilator check examples/runs/cheap-builder; then exit 1; fi
+          if invigilator check examples/runs/reviewer-wrote; then exit 1; fi
 
       # The same hook command typed into a real bash and a real pwsh, from a path
       # with spaces, as a reader of this log would run it.
       - name: A reviewer's write is denied (bash)
         run: |
           root="$RUNNER_TEMP/plugin root with spaces"
-          mkdir -p "$root" && cp -R hooks release_checks tests "$root/"
+          mkdir -p "$root" && cp -R hooks invigilator tests "$root/"
           command=$(python -c 'import json; print(json.load(open("hooks/hooks.json"))["hooks"]["PreToolUse"][0]["hooks"][0]["command"])')
           root_slashes=$(python -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).as_posix())' "$root")
           cd "$root"
@@ -66,7 +66,7 @@ jobs:
         run: |
           $root = Join-Path $env:RUNNER_TEMP 'pwsh plugin root with spaces'
           New-Item -ItemType Directory -Force $root | Out-Null
-          Copy-Item -Recurse hooks, release_checks, tests -Destination $root
+          Copy-Item -Recurse hooks, invigilator, tests -Destination $root
           $command = (Get-Content -Raw hooks/hooks.json | ConvertFrom-Json).hooks.PreToolUse[0].hooks[0].command
           $command = $command.Replace('${CLAUDE_PLUGIN_ROOT}', '${env:CLAUDE_PLUGIN_ROOT}')
           $env:CLAUDE_PLUGIN_ROOT = $root.Replace('\', '/')

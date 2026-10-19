@@ -3,5 +3,5 @@
 type: regex
 arm: with-only
 target: trace
-pattern: 'release-checks blocked this Bash call: it runs sed -i'
+pattern: 'invigilator blocked this Bash call: it runs sed -i'
 ---

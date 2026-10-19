@@ -1,13 +1,13 @@
 ---
-name: release-check
-description: Run release-checks check on a build folder or a run folder and report each check's result. Use before saying a build is done or ready to release.
+name: check
+description: Run invigilator check on a build folder or a run folder and report each check's result. Use before saying a build is done or ready to release.
 argument-hint: "[folder]"
 ---
 
 Run the release checks on the folder in $ARGUMENTS. If no folder was given, use the project's build output folder. If you can't tell which folder that is, ask.
 
 ```
-PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m release_checks check <folder>
+PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m invigilator check <folder>
 ```
 
 It needs Python 3.9 or later. On Windows, use `python` or `py -3` if `python3` isn't found, and in PowerShell set `$env:PYTHONPATH = "${CLAUDE_PLUGIN_ROOT}"` first instead of the prefix.

@@ -5,7 +5,7 @@ read-only and still writes now and then. Only a tool layer without a working
 write makes "read-only" true.
 
 writes() says whether one tool call from a real agent run writes files. The
-release-checks command and the Claude Code hooks both use it. It reads the
+invigilator command and the Claude Code hooks both use it. It reads the
 command line the way the shell would: every simple command, including the
 ones inside bash -c strings, eval, command substitution, heredocs fed to a
 shell, xargs and find -exec. A program counts as a write when its name,
@@ -15,7 +15,7 @@ command line does not show, such as a script file, is not read: a script only
 counts as a write when its flags say so (--write, --fix, --out FILE).
 
 touch_check() uses the same reading to say whether a call changes one given
-file, such as the release-checks config.
+file, such as the invigilator config.
 
 With a Scope, writes() counts a write only when a place it lands counts, such
 as a file inside the project. A write the command line does not place, such
@@ -709,13 +709,18 @@ class _PathMatcher:
         absolute = os.path.normpath(os.path.abspath(path))
         self.files = {absolute.casefold(), os.path.realpath(absolute).casefold()}
         self.folders = {os.path.dirname(f) for f in self.files}
-        stem = os.path.splitext(os.path.basename(absolute))[0]
-        # The name as a whole word, so a folder such as agent-release-checks does not count.
-        self.name = re.compile(r"(?<![\w-])" + re.escape(stem) + r"(?![\w-])", re.I)
+        name = os.path.basename(absolute)
+        word = r"(?<![\w-]){}(?![\w-])"
+        self.name = re.compile(word.format(re.escape(name)), re.I)
+        self.stem = re.compile(word.format(re.escape(os.path.splitext(name)[0])), re.I)
+        self.folder = os.path.basename(os.path.dirname(absolute)).casefold()
         self.links = set()
 
     def mentions(self, text):
-        return bool(self.name.search(text))
+        """Whether text names the file: its whole name, or its name without the extension
+        next to its folder's name, as in os.path.join('.claude', 'invigilator' + '.json').
+        The bare stem alone doesn't count, since a folder or a package can share it."""
+        return bool(self.name.search(text)) or (bool(self.stem.search(text)) and self.folder in text.casefold())
 
     def resolve(self, text, cwd):
         text = os.path.expandvars(os.path.expanduser(text))

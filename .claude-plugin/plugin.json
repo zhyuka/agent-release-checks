@@ -1,23 +1,23 @@
 {
-  "name": "agent-release-checks",
-  "displayName": "Agent release checks",
+  "name": "invigilator",
+  "displayName": "Invigilator",
   "version": "0.3.0",
   "description": "Hooks that keep reviewer agents read-only and keep a builder from stopping until its QA command passes after its last edit.",
   "author": {
     "name": "Derek Zhou",
     "url": "https://github.com/zhyuka"
   },
-  "homepage": "https://github.com/zhyuka/agent-release-checks",
-  "repository": "https://github.com/zhyuka/agent-release-checks",
-  "documentationUrl": "https://github.com/zhyuka/agent-release-checks#readme",
-  "supportUrl": "https://github.com/zhyuka/agent-release-checks/issues",
+  "homepage": "https://github.com/zhyuka/invigilator",
+  "repository": "https://github.com/zhyuka/invigilator",
+  "documentationUrl": "https://github.com/zhyuka/invigilator#readme",
+  "supportUrl": "https://github.com/zhyuka/invigilator/issues",
   "license": "MIT",
   "keywords": ["hooks", "code-review", "qa", "release", "subagents", "claude-code-hooks", "reviewer", "stop-hook", "verification"],
   "userConfig": {
     "reviewer_agents": {
       "type": "string",
       "title": "Reviewer agents",
-      "description": "Agents that may not write files, as name patterns separated by commas, such as *reviewer*, code-reviewer. A project's .claude/release-checks.json overrides this.",
+      "description": "Agents that may not write files, as name patterns separated by commas, such as *reviewer*, code-reviewer. A project's .claude/invigilator.json overrides this.",
       "default": "*reviewer*"
     },
     "reviewer_shell": {
@@ -29,7 +29,7 @@
     "builder_agents": {
       "type": "string",
       "title": "Builder agents",
-      "description": "Agents that must pass the project's QA command after their last edit before they stop, as name patterns separated by commas. Write main for the main session. Each project sets its QA command in .claude/release-checks.json: run /agent-release-checks:setup.",
+      "description": "Agents that must pass the project's QA command after their last edit before they stop, as name patterns separated by commas. Write main for the main session. Each project sets its QA command in .claude/invigilator.json: run /invigilator:setup.",
       "default": "*builder*"
     },
     "session_status": {

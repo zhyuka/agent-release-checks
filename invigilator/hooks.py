@@ -10,7 +10,7 @@ from stopping when the transcript shows a file write after the last QA
 command that passed. It reads the transcript from the end and stops once it
 knows the answer, and lets the agent stop with a warning when it cannot read it.
 
-Both read the project config at .claude/release-checks.json:
+Both read the project config at .claude/invigilator.json:
 
     {
       "reviewer_agents": ["*reviewer*"],
@@ -42,7 +42,7 @@ from pathlib import Path
 
 from . import readonly, runlog, step_ran
 
-CONFIG = Path(".claude") / "release-checks.json"
+CONFIG = Path(".claude") / "invigilator.json"
 DEFAULTS = {"reviewer_agents": ["*reviewer*"], "reviewer_shell": "block-writes",
             "builder_agents": ["*builder*"], "qa_commands": []}
 SHELL_MODES = ("block-writes", "block-all")
@@ -111,7 +111,7 @@ def label(agent):
 
 def reviewer_readonly(event, config):
     """PreToolUse output that denies a reviewer's write, or asks the user before
-    any agent changes the release-checks config, or None to leave the call alone."""
+    any agent changes the invigilator config, or None to leave the call alone."""
     if event.get("hook_event_name") != "PreToolUse":
         return None
     return _deny_reviewer_write(event, config) or _ask_before_config_change(event)
@@ -129,7 +129,7 @@ def _ask_before_config_change(event):
         "hookEventName": "PreToolUse",
         "permissionDecision": "ask",
         "permissionDecisionReason": (
-            f"release-checks: this {tool} call {reason}, which changes {CONFIG.as_posix()}. That "
+            f"invigilator: this {tool} call {reason}, which changes {CONFIG.as_posix()}. That "
             "file sets who counts as a reviewer or a builder and which QA commands must pass, so "
             "changing it can turn the release checks off or change them. It needs your OK.")}}
 
@@ -155,7 +155,7 @@ def _deny_reviewer_write(event, config):
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": (
-            f"release-checks blocked this {tool} call: it {reason}. The project config lists "
+            f"invigilator blocked this {tool} call: it {reason}. The project config lists "
             f"{label(agent)} as a reviewer, and reviewers are read-only. Put the change you would "
             "make in your review instead.")}}
 
@@ -287,9 +287,9 @@ def qa_before_done(event, config):
     if not matches(agent, config["builder_agents"]):
         return None
     qa_commands, problem = _usable_qa_commands(config["qa_commands"])
-    note = {"systemMessage": f"release-checks: {problem}, so it is left out."} if problem else {}
+    note = {"systemMessage": f"invigilator: {problem}, so it is left out."} if problem else {}
     if not qa_commands:
-        return {"systemMessage": f"release-checks: the QA check did not run for {label(agent)}, because {problem}."}
+        return {"systemMessage": f"invigilator: the QA check did not run for {label(agent)}, because {problem}."}
     deadline = runlog.Deadline(STOP_SECONDS)
     # Only writes inside the project need QA: notes in /tmp or ~/.claude don't. A write the
     # command line does not place counts wherever it is.
@@ -307,13 +307,13 @@ def qa_before_done(event, config):
             if os.stat(path).st_size != size:
                 verdict, waiting = stop_verdict(path, qa_commands, deadline, scope)
     except (OSError, TypeError, ValueError, RecursionError, MemoryError) as err:
-        return {"systemMessage": f"release-checks: the QA check did not run for {label(agent)}, "
+        return {"systemMessage": f"invigilator: the QA check did not run for {label(agent)}, "
                                  f"because its transcript could not be read ({err})."}
     if verdict is None or verdict.accepted:
         return note or None  # nothing was built in this run, or QA passed after the last write
     commands = " or ".join(f"`{qa}`" for qa in qa_commands)
     return {**note, "decision": "block",
-            "reason": (f"release-checks: {verdict.reason}. The project config lists {label(agent)} "
+            "reason": (f"invigilator: {verdict.reason}. The project config lists {label(agent)} "
                        f"as a builder, so run {commands} after your last edit and get it to pass "
                        "before you stop. Run it on its own, not through a pipe or with || true, so "
                        "its exit code counts.")}
@@ -324,16 +324,16 @@ def main(hook):
     try:
         event = json.load(sys.stdin)
     except ValueError as err:
-        print(f"release-checks: the hook input is not JSON ({err})", file=sys.stderr)
+        print(f"invigilator: the hook input is not JSON ({err})", file=sys.stderr)
         return 1
     if not isinstance(event, dict):
-        print("release-checks: the hook input is not a JSON object", file=sys.stderr)
+        print("invigilator: the hook input is not a JSON object", file=sys.stderr)
         return 1
     project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "."
     config, problem = load_config(project)
     output = hook(event, config) or {}
     if problem:
-        output["systemMessage"] = f"release-checks: {problem}. Using the default config."
+        output["systemMessage"] = f"invigilator: {problem}. Using the default config."
     if output:
         print(json.dumps(output))
     return 0

@@ -8,8 +8,8 @@ import shlex
 import unittest
 from pathlib import Path
 
-from release_checks import hooks as hooks_module
-from release_checks import plugin
+from invigilator import hooks as hooks_module
+from invigilator import plugin
 
 ROOT = Path(__file__).resolve().parent.parent
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -78,7 +78,7 @@ class PluginFilesTest(unittest.TestCase):
 
     def test_each_skill_has_a_description(self):
         skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
-        self.assertEqual([path.parent.name for path in skills], ["release-check", "setup"])
+        self.assertEqual([path.parent.name for path in skills], ["check", "setup"])
         for path in skills:
             text = path.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("---\n"), path)

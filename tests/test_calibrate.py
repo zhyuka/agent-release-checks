@@ -5,9 +5,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from release_checks.calibrate import Calibration, calibrate, calibrate_all
-from release_checks.cli import main
-from release_checks.vacuous import naive_score
+from invigilator.calibrate import Calibration, calibrate, calibrate_all
+from invigilator.cli import main
+from invigilator.vacuous import naive_score
 
 GOOD = Path(__file__).resolve().parent.parent / "examples" / "builds" / "good"
 
@@ -37,7 +37,7 @@ class CalibrateTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(main(["demo"]), 0)
             failing = [Calibration("broken check", 0, 1, 1, 1)]
-            with mock.patch("release_checks.calibrate.calibrate_all", return_value=failing):
+            with mock.patch("invigilator.calibrate.calibrate_all", return_value=failing):
                 self.assertEqual(main(["demo"]), 1)
 
 

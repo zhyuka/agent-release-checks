@@ -1,6 +1,6 @@
-"""release-checks demo | release-checks check <folder>
+"""invigilator demo | invigilator check <folder>
 
-Also runs as python -m release_checks.
+Also runs as python -m invigilator.
 """
 import argparse
 import sys
@@ -75,7 +75,7 @@ def demo_calibration():
 
 def demo():
     if not BUILDS.is_dir():
-        print(f"release-checks: the demo reads {BUILDS}, which only exists in a clone of the repo",
+        print(f"invigilator: the demo reads {BUILDS}, which only exists in a clone of the repo",
               file=sys.stderr)
         return 2
     for part in (demo_vacuous, demo_readonly, demo_step_ran):
@@ -89,7 +89,7 @@ def run_check(folder):
     try:
         results = check.check_folder(folder)
     except runlog.RunLogError as err:
-        print(f"release-checks: {err}", file=sys.stderr)
+        print(f"invigilator: {err}", file=sys.stderr)
         return 2
     print(f"Release checks for {folder}")
     table(["check", "result", "detail"], [(r.check, r.status, r.detail) for r in results])
@@ -101,7 +101,7 @@ def run_check(folder):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="release-checks",
+    parser = argparse.ArgumentParser(prog="invigilator",
                                      description="Release checks for agent-built software.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("demo", help="run the stub-agent demo and calibration")

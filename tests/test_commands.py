@@ -13,8 +13,8 @@ import time
 import unittest
 from pathlib import Path
 
-from release_checks import shell
-from release_checks.readonly import command_writes, writes
+from invigilator import shell
+from invigilator.readonly import command_writes, writes
 
 COMMANDS = Path(__file__).resolve().parent / "fixtures" / "commands"
 

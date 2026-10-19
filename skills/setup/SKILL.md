@@ -1,12 +1,12 @@
 ---
 name: setup
-description: Set up agent-release-checks for this project. Finds the project's check command, asks which agents are builders and reviewers, and writes .claude/release-checks.json once the user confirms. Use after installing the plugin, when asked to configure release checks, or when the plugin says the QA check is off.
+description: Set up invigilator for this project. Finds the project's check command, asks which agents are builders and reviewers, and writes .claude/invigilator.json once the user confirms. Use after installing the plugin, when asked to configure release checks, or when the plugin says the QA check is off.
 argument-hint: "[qa command]"
 ---
 
-Write `.claude/release-checks.json` for this project. The plugin's hooks read it from the project root on every call. Don't write it until the user confirms.
+Write `.claude/invigilator.json` for this project. The plugin's hooks read it from the project root on every call. Don't write it until the user confirms.
 
-1. Read `.claude/release-checks.json` if it exists, and keep its fields unless the user changes them.
+1. Read `.claude/invigilator.json` if it exists, and keep its fields unless the user changes them.
 
 2. Find the QA command. If `$ARGUMENTS` names one, use that. Otherwise look for these, and note the file each candidate came from:
    - `package.json` scripts named `check`, `verify`, `test`, `lint` or `typecheck`. Use `npm run <name>`, or `pnpm` or `yarn` when the project has `pnpm-lock.yaml` or `yarn.lock`.

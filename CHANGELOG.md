@@ -6,22 +6,23 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 
 ### Added
 
-- A launcher, `hooks/run.sh` and `hooks/run.py`, that finds Python on macOS, Linux and Windows. It tries `python3` and then `python`, and on Windows `py -3`, `python` and `python3`. It moves past the Microsoft Store's app execution aliases and skips macOS's `/usr/bin/python3` when the command line tools aren't installed. `RELEASE_CHECKS_PYTHON` picks a particular Python.
+- A launcher, `hooks/run.sh` and `hooks/run.py`, that finds Python on macOS, Linux and Windows. It tries `python3` and then `python`, and on Windows `py -3`, `python` and `python3`. It moves past the Microsoft Store's app execution aliases and skips macOS's `/usr/bin/python3` when the command line tools aren't installed. `INVIGILATOR_PYTHON` picks a particular Python.
 - On Windows without Git Bash, PowerShell runs a second line in each hook command, which finds Python the same way.
 - With no Python 3.9 or later, the hooks let every call through and warn once per session, instead of failing on every call.
-- Plugin options for reviewer agents, builder agents, the reviewer shell rule and the line at session start, set with `/plugin configure`. A field in `.claude/release-checks.json` wins over the option.
+- Plugin options for reviewer agents, builder agents, the reviewer shell rule and the line at session start, set with `/plugin configure`. A field in `.claude/invigilator.json` wins over the option.
 - A SessionStart hook that says in one line what the hooks will block. It shows once per project and again when the settings change, and a config problem shows in every session.
-- `/agent-release-checks:setup`, a skill that finds the project's QA command and writes `.claude/release-checks.json` once you confirm.
+- `/invigilator:setup`, a skill that finds the project's QA command and writes `.claude/invigilator.json` once you confirm.
 - CI on Ubuntu, macOS and Windows. It runs every hook command on every fixture in sh, dash, bash, Git Bash, pwsh and Windows PowerShell from a plugin path with spaces, and runs `claude plugin validate --strict` on the marketplace and the plugin.
 - The reviewer hook reads a shell command the way the shell does, including `bash -c` strings, `eval`, command substitutions, heredocs, `xargs`, `find -exec` and inline code such as `python -c`. On 699 commands from real agent sessions, labeled by hand, it denies none of the 423 that only read, down from 3, and misses 15 of the 191 that write, down from 39. Of 150 red-team writes made to look harmless, it misses 3, down from 88.
 - A reviewer may write to a temp folder outside the project, such as `/tmp`. Of the 191 labeled writes, the 76 that land only in temp folders now go through.
-- For every agent, a call that changes `.claude/release-checks.json` asks you first, since an agent could turn the checks off by editing it.
+- For every agent, a call that changes `.claude/invigilator.json` asks you first, since an agent could turn the checks off by editing it.
 - The QA hook reads the transcript from the end. On the 10 largest transcripts tried, 86 to 347 MB, a stop takes 135 to 215 ms instead of 1.0 to 3.8 s.
 - Replaying 5,287 real transcripts from Claude Code 2.1.136 to 2.1.288 found 68 stops that 0.2.0 blocked wrongly. 66 of them now let the agent stop, and the other 2 block because inline Python and a build step now count as writes. A failed Edit or Write, a command Claude Code refused to run, and a git command that changes only refs, the index or a remote no longer count as writes. The hook reads PowerShell commands, a QA run Claude Code moved to the background no longer counts as passed, and a record Claude Code copied back into the file counts once.
 - The QA hook counts a write only when it lands inside the project, or where the hook can't tell. On the same transcripts, blocks went from 1,372 to 946, because notes in `/tmp` or `~/.claude` no longer send a builder back.
 
 ### Changed
 
+- Renamed from agent-release-checks to invigilator. The plugin is `invigilator@zhyuka`, the Python package and the command are `invigilator`, the project file is `.claude/invigilator.json`, the skills are `/invigilator:check` and `/invigilator:setup`, and `INVIGILATOR_PYTHON` picks a Python.
 - The hooks read their input as UTF-8 on every platform. Python on Windows had read it in the locale's code page.
 - A hook that crashes or can't read its input now lets the call through with a warning and exits 0. Since Claude Code 2.1.299, on Windows without Git Bash, a PreToolUse hook that fails blocks the tool call, so before this change a missing Python there blocked every agent's edits. The PreToolUse hook also sets `"onFailure": "continue"`.
 - `plugin.json` has `documentationUrl`, `supportUrl` and more keywords. The marketplace entry has `version`, `tags` and `homepage`.
@@ -31,6 +32,6 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 ## 0.2.0
 
 - Three release checks with stub agents and a demo: a guard that refuses to score an empty build, a read-only audit of reviewer runs, and a verifier that accepts "QA passed" only with evidence tied to the build. Each check is calibrated on a planted bad case and a known-good one.
-- `release-checks check <folder>` runs the checks on a build folder, or on a run folder with a `run.json`.
-- A Claude Code plugin and the `zhyuka` marketplace. A PreToolUse hook keeps reviewer agents read-only, and a Stop and SubagentStop hook keeps a builder from stopping until its QA command passes after its last edit. The `/agent-release-checks:release-check` skill runs the checks from a session.
+- A `check` command that runs the checks on a build folder, or on a run folder with a `run.json`.
+- A Claude Code plugin and the `zhyuka` marketplace. A PreToolUse hook keeps reviewer agents read-only, and a Stop and SubagentStop hook keeps a builder from stopping until its QA command passes after its last edit. A skill runs the checks from a session.
 - CI on Python 3.9 to 3.13.

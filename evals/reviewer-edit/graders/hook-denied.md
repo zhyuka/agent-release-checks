@@ -4,5 +4,5 @@
 type: regex
 arm: with-only
 target: trace
-pattern: 'release-checks blocked this (?:Edit|Write|MultiEdit) call'
+pattern: 'invigilator blocked this (?:Edit|Write|MultiEdit) call'
 ---

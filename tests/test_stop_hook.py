@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from release_checks import hooks, readonly, runlog, step_ran
+from invigilator import hooks, readonly, runlog, step_ran
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -218,7 +218,7 @@ class OneRuleTest(unittest.TestCase):
     def test_the_hooks_reach_no_private_helper_in_another_module(self):
         import ast
         for module in ("hooks", "plugin", "step_ran", "readonly", "runlog", "check", "cli"):
-            source = (ROOT / "release_checks" / f"{module}.py").read_text(encoding="utf-8")
+            source = (ROOT / "invigilator" / f"{module}.py").read_text(encoding="utf-8")
             reached = sorted({f"{node.value.id}.{node.attr}" for node in ast.walk(ast.parse(source))
                               if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
                               and node.value.id in ("hooks", "plugin", "shell", "step_ran", "readonly", "runlog")
@@ -250,7 +250,7 @@ class ProjectScopeTest(TempDir):
                                                  cwd=str(self.tmp))), "block")
         (self.tmp / ".claude").mkdir()
         config = {"qa_commands": QA_COMMANDS, "builder_agents": ["main"]}
-        (self.tmp / ".claude" / "release-checks.json").write_text(json.dumps(config))
+        (self.tmp / ".claude" / "invigilator.json").write_text(json.dumps(config))
         self.assertEqual(self.outcome(stop_event(path, cwd=str(self.tmp)), project=None), "block",
                          "without CLAUDE_PROJECT_DIR the project is the hook input's cwd")
 
@@ -330,12 +330,12 @@ class BadInputTest(TempDir):
         (project / ".claude").mkdir(parents=True)
         path = self.transcript(lines(*WRITE, *DONE))
         for qa in (["npm run 'check"], [""], ["  "]):
-            (project / ".claude" / "release-checks.json").write_text(json.dumps({"qa_commands": qa, "builder_agents": ["main"]}))
+            (project / ".claude" / "invigilator.json").write_text(json.dumps({"qa_commands": qa, "builder_agents": ["main"]}))
             code, output, stderr = run_hook(stop_event(path, cwd=str(project)), project=project)
             self.assertEqual(code, 0, stderr)
             self.assertNotIn("decision", output, qa)
             self.assertIn("did not run", output["systemMessage"], qa)
-        (project / ".claude" / "release-checks.json").write_text(
+        (project / ".claude" / "invigilator.json").write_text(
             json.dumps({"qa_commands": ["", "npm run check"], "builder_agents": ["main"]}))
         output = run_hook(stop_event(path, cwd=str(project)), project=project)[1]
         self.assertEqual(output["decision"], "block")

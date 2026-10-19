@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_checks.vacuous import guarded_score, load_build, naive_score, score_build
+from invigilator.vacuous import guarded_score, load_build, naive_score, score_build
 
 BUILDS = Path(__file__).resolve().parent.parent / "examples" / "builds"
 

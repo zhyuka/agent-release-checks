@@ -4,5 +4,5 @@ type: regex
 weight: 3
 target: trace
 match: not_contains
-pattern: 'release-checks blocked'
+pattern: 'invigilator blocked'
 ---

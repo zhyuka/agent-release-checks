@@ -20,7 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_checks import hooks, plugin
+from invigilator import hooks, plugin
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures" / "hooks"
@@ -74,8 +74,8 @@ class PluginCopy:
         tmp = tempfile.TemporaryDirectory()
         test.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
-        self.root = self.tmp / "plugin root with spaces" / "agent release checks"
-        for part in ("hooks", "release_checks", ".claude-plugin"):
+        self.root = self.tmp / "plugin root with spaces" / "invigilator plugin"
+        for part in ("hooks", "invigilator", ".claude-plugin"):
             shutil.copytree(ROOT / part, self.root / part,
                             ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copytree(ROOT / "tests" / "fixtures", self.root / "tests" / "fixtures")
@@ -93,11 +93,11 @@ class PluginCopy:
             encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
             argv = [executable, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]
         full_env = {k: v for k, v in os.environ.items()
-                    if not k.startswith(("CLAUDE_PLUGIN_", "CLAUDE_PROJECT_DIR", "RELEASE_CHECKS_"))}
+                    if not k.startswith(("CLAUDE_PLUGIN_", "CLAUDE_PROJECT_DIR", "INVIGILATOR_"))}
         full_env.update({"CLAUDE_PLUGIN_ROOT": root, "TMPDIR": str(self.tmp / "temp"),
                          "TEMP": str(self.tmp / "temp"), "TMP": str(self.tmp / "temp")})
         if python:
-            full_env["RELEASE_CHECKS_PYTHON"] = python
+            full_env["INVIGILATOR_PYTHON"] = python
         full_env.update(env or {})
         done = subprocess.run(argv, input=payload.encode("utf-8"), capture_output=True,
                               cwd=cwd or self.root, env=full_env, timeout=120)
@@ -243,11 +243,11 @@ class RunPyTest(unittest.TestCase):
 
     def test_a_broken_plugin_copy_is_reported(self):
         plugin_copy = PluginCopy(self)
-        (plugin_copy.root / "release_checks" / "plugin.py").write_text("this is not python\n")
+        (plugin_copy.root / "invigilator" / "plugin.py").write_text("this is not python\n")
         code, output, _ = self.run_py("reviewer_readonly", payload="{}",
                                       script=plugin_copy.root / "hooks" / "run.py")
         self.assertEqual(code, 0)
-        self.assertIn("release-checks is off: it could not load", output["systemMessage"])
+        self.assertIn("invigilator is off: it could not load", output["systemMessage"])
 
     def planted_hook(self, body):
         plugin_copy = PluginCopy(self)
@@ -289,7 +289,7 @@ class PluginOptionsTest(unittest.TestCase):
 
     def configure(self, **fields):
         (self.project / ".claude").mkdir(exist_ok=True)
-        (self.project / ".claude" / "release-checks.json").write_text(json.dumps(fields))
+        (self.project / ".claude" / "invigilator.json").write_text(json.dumps(fields))
 
     def test_without_options_or_a_file_the_defaults_apply(self):
         self.assertEqual(hooks.load_config(self.project, {}), (hooks.DEFAULTS, ""))
@@ -311,7 +311,7 @@ class PluginOptionsTest(unittest.TestCase):
 
     def test_a_broken_file_still_reports_its_problem_and_the_options_apply(self):
         (self.project / ".claude").mkdir()
-        (self.project / ".claude" / "release-checks.json").write_text("{")
+        (self.project / ".claude" / "invigilator.json").write_text("{")
         config, problem = hooks.load_config(self.project, {"CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS": "main"})
         self.assertIn("could not be read", problem)
         self.assertEqual(config["builder_agents"], ["main"])
@@ -361,12 +361,12 @@ class SessionStatusTest(unittest.TestCase):
 
     def configure(self, text):
         (self.project / ".claude").mkdir(exist_ok=True)
-        (self.project / ".claude" / "release-checks.json").write_text(text)
+        (self.project / ".claude" / "invigilator.json").write_text(text)
 
     def test_once_shows_the_line_the_first_time_and_again_when_it_changes(self):
         first = self.status()
-        self.assertEqual(first, "release-checks is on. Reviewers (*reviewer*) can't write files. The QA "
-                                "check is off until you set a QA command: run /agent-release-checks:setup.")
+        self.assertEqual(first, "invigilator is on. Reviewers (*reviewer*) can't write files. The QA "
+                                "check is off until you set a QA command: run /invigilator:setup.")
         self.assertEqual(self.status(), "")
         self.configure('{"builder_agents": ["main"], "qa_commands": ["npm test"]}')
         self.assertIn('Builders (the main session) must pass "npm test" after their last edit',
@@ -374,8 +374,8 @@ class SessionStatusTest(unittest.TestCase):
         self.assertEqual(self.status(), "")
 
     def test_always_and_off(self):
-        self.assertIn("release-checks is on", self.status("always"))
-        self.assertIn("release-checks is on", self.status("always"))
+        self.assertIn("invigilator is on", self.status("always"))
+        self.assertIn("invigilator is on", self.status("always"))
         self.assertEqual(self.status("off"), "")
 
     def test_once_without_a_data_folder_shows_nothing(self):
@@ -394,9 +394,9 @@ class SessionStatusTest(unittest.TestCase):
     def test_the_line_names_block_all_and_the_settings_file(self):
         self.configure('{"reviewer_shell": "block-all", "builder_agents": [], "qa_commands": ["make"]}')
         self.assertEqual(self.status("always"),
-                         "release-checks is on. Reviewers (*reviewer*) can't write files or run shell "
+                         "invigilator is on. Reviewers (*reviewer*) can't write files or run shell "
                          "commands. The QA check is off because no agent counts as a builder. "
-                         "Settings: .claude/release-checks.json.")
+                         "Settings: .claude/invigilator.json.")
 
 
 if __name__ == "__main__":

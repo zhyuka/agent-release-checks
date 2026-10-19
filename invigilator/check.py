@@ -1,4 +1,4 @@
-"""release-checks check <folder>: run the three checks on your own build or run.
+"""invigilator check <folder>: run the three checks on your own build or run.
 
 The folder is a run folder with a run.json (see runlog.py), or a bare build
 folder. A check that has nothing to read is reported as skipped, with the

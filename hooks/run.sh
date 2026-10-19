@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run one release-checks hook with the first Python 3.9 or later on this machine.
+# Run one invigilator hook with the first Python 3.9 or later on this machine.
 #
 # hooks.json runs this on macOS, Linux and Windows with Git Bash as
 #     sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <hook>
@@ -19,8 +19,8 @@ try_python() {
     "$@" "$here/run.py" "$hook" && exit 0
 }
 
-if [ -n "$RELEASE_CHECKS_PYTHON" ]; then
-    try_python "$RELEASE_CHECKS_PYTHON"
+if [ -n "$INVIGILATOR_PYTHON" ]; then
+    try_python "$INVIGILATOR_PYTHON"
 fi
 
 case $(uname -s 2>/dev/null) in
@@ -45,9 +45,9 @@ esac
 
 # No Python ran the hook. Say so once per session, and let the call through.
 session=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]*\)".*/\1/p' | head -n 1)
-marker="${TMPDIR:-/tmp}/release-checks-no-python-${session:-unknown}"
+marker="${TMPDIR:-/tmp}/invigilator-no-python-${session:-unknown}"
 if [ ! -e "$marker" ]; then
     : >"$marker" 2>/dev/null
-    printf '%s\n' '{"systemMessage": "release-checks is off: it needs Python 3.9 or later, and none ran (tried python3, python and py -3). Install Python, or set RELEASE_CHECKS_PYTHON to its path."}'
+    printf '%s\n' '{"systemMessage": "invigilator is off: it needs Python 3.9 or later, and none ran (tried python3, python and py -3). Install Python, or set INVIGILATOR_PYTHON to its path."}'
 fi
 exit 0

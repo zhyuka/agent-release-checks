@@ -1,6 +1,8 @@
-# Agent release checks
+# Invigilator
 
-[![tests](https://github.com/zhyuka/agent-release-checks/actions/workflows/tests.yml/badge.svg)](https://github.com/zhyuka/agent-release-checks/actions/workflows/tests.yml)
+[![tests](https://github.com/zhyuka/invigilator/actions/workflows/tests.yml/badge.svg)](https://github.com/zhyuka/invigilator/actions/workflows/tests.yml)
+
+An exam invigilator watches the room. Here that means reviewers can't touch the answers, and nobody hands in without sitting the test.
 
 Two Claude Code hooks for projects where agents write and review code.
 
@@ -12,10 +14,11 @@ Two Claude Code hooks for projects where agents write and review code.
 Install from a Claude Code session:
 
 ```
-/plugin install agent-release-checks --marketplace zhyuka/agent-release-checks
+/plugin marketplace add zhyuka/invigilator
+/plugin install invigilator@zhyuka
 ```
 
-Then run `/agent-release-checks:setup` to choose your QA command. It needs Python 3.9 or later and nothing else. It has no dependencies and makes no network calls.
+Then run `/invigilator:setup` to choose your QA command. It needs Python 3.9 or later and nothing else. It has no dependencies and makes no network calls.
 
 ## Install
 
@@ -23,16 +26,16 @@ Each of these adds the `zhyuka` marketplace and installs the plugin for your use
 
 | Where | Command | Claude Code |
 | --- | --- | --- |
-| In a session | `/plugin install agent-release-checks --marketplace zhyuka/agent-release-checks` | 2.1.275 or later |
-| In a shell | `claude plugin install agent-release-checks --marketplace zhyuka/agent-release-checks` | 2.1.292 or later |
-| Either, on an older version | `/plugin marketplace add zhyuka/agent-release-checks`, then `/plugin install agent-release-checks@zhyuka` | |
+| In a session | `/plugin install invigilator --marketplace zhyuka/invigilator` | 2.1.275 or later |
+| In a shell | `claude plugin install invigilator --marketplace zhyuka/invigilator` | 2.1.292 or later |
+| Either, on an older version | `/plugin marketplace add zhyuka/invigilator`, then `/plugin install invigilator@zhyuka` | |
 
 The hooks need Claude Code 2.1.69 or later, the first version that tells hooks which subagent is acting. They also need Python 3.9 or later as `python3` or `python`, or as `py -3` on Windows. Git Bash is optional on Windows.
 
 ### What happens on first run
 
 1. Hooks load when a session starts. After the install, start a new session or run `/reload-plugins`.
-2. The session opens with one line from the plugin: `release-checks is on. Reviewers (*reviewer*) can't write files. The QA check is off until you set a QA command: run /agent-release-checks:setup.` It shows once per project, and again when the settings change.
+2. The session opens with one line from the plugin: `invigilator is on. Reviewers (*reviewer*) can't write files. The QA check is off until you set a QA command: run /invigilator:setup.` It shows once per project, and again when the settings change.
 3. From then on, an agent whose name matches `*reviewer*` can't write files. The QA check stays off until the project names a QA command, so nothing else changes until you run the setup skill.
 
 An install in a session can show the plugin's options with their defaults filled in. Keep them or change them; [Configure it](#configure-it) says what each one does.
@@ -40,15 +43,15 @@ An install in a session can show the plugin's options with their defaults filled
 ## Examples
 
 1. Keep a reviewer read-only. Ask: "Use the code-reviewer agent to review build/app.js and list what to fix." If the reviewer tries `sed -i` on the file, Claude Code cancels the call and tells it to put the change in its review instead.
-2. Make "done" mean QA passed. With `"builder_agents": ["main"]` and `"qa_commands": ["npm run check"]` in `.claude/release-checks.json`, ask: "Fix the failing test in src/cart.js and tell me when it's done." If Claude edits, runs `npm run check | tail -5` and tries to stop, the hook sends it back to run `npm run check` on its own. It can stop once that passes after its last edit.
-3. Check a finished build. In a clone of this repo, run `/agent-release-checks:release-check examples/runs/cheap-builder`. It prints pass, fail or skip for each check. Here "step ran" fails because `npm run check` never ran, and the command exits 1.
+2. Make "done" mean QA passed. With `"builder_agents": ["main"]` and `"qa_commands": ["npm run check"]` in `.claude/invigilator.json`, ask: "Fix the failing test in src/cart.js and tell me when it's done." If Claude edits, runs `npm run check | tail -5` and tries to stop, the hook sends it back to run `npm run check` on its own. It can stop once that passes after its last edit.
+3. Check a finished build. In a clone of this repo, run `/invigilator:check examples/runs/cheap-builder`. It prints pass, fail or skip for each check. Here "step ran" fails because `npm run check` never ran, and the command exits 1.
 
 ## Configure it
 
 Every setting is optional. There are three places to set them.
 
-- **The setup skill.** `/agent-release-checks:setup` finds the project's check command in `package.json`, a `Makefile`, pytest, tox, Cargo or Go, asks which agents are builders and reviewers, and writes `.claude/release-checks.json` once you confirm.
-- **The project file.** `.claude/release-checks.json` holds the settings for one project, and you can commit it for your team:
+- **The setup skill.** `/invigilator:setup` finds the project's check command in `package.json`, a `Makefile`, pytest, tox, Cargo or Go, asks which agents are builders and reviewers, and writes `.claude/invigilator.json` once you confirm.
+- **The project file.** `.claude/invigilator.json` holds the settings for one project, and you can commit it for your team:
 
   ```json
   {
@@ -59,7 +62,7 @@ Every setting is optional. There are three places to set them.
   }
   ```
 
-- **Plugin options.** These are yours, for every project. Set them with `/plugin configure agent-release-checks@zhyuka` or in `/config` in a session, or from a shell with `--config builder_agents=main` on `claude plugin install`. Claude Code 2.1.285 or later also has `claude plugin configure agent-release-checks@zhyuka --values-stdin`. Lists are names separated by commas.
+- **Plugin options.** These are yours, for every project. Set them with `/plugin configure invigilator@zhyuka` or in `/config` in a session, or from a shell with `--config builder_agents=main` on `claude plugin install`. Claude Code 2.1.285 or later also has `claude plugin configure invigilator@zhyuka --values-stdin`. Lists are names separated by commas.
 
 | Setting | Default | What it does | Where |
 | --- | --- | --- | --- |
@@ -77,26 +80,26 @@ A project file with bad JSON, an unknown field or a wrong type makes the hooks f
 
 ## Turn it off
 
-- In one project, for you: `claude plugin disable agent-release-checks@zhyuka --scope local`. For everyone on the project: `--scope project`.
-- Everywhere: `/plugin disable agent-release-checks@zhyuka` in a session, or `claude plugin disable agent-release-checks@zhyuka`. `claude plugin uninstall agent-release-checks@zhyuka` removes it.
+- In one project, for you: `claude plugin disable invigilator@zhyuka --scope local`. For everyone on the project: `--scope project`.
+- Everywhere: `/plugin disable invigilator@zhyuka` in a session, or `claude plugin disable invigilator@zhyuka`. `claude plugin uninstall invigilator@zhyuka` removes it.
 - One check only: leave `qa_commands` out of the project file to turn off the QA check, or set `"reviewer_agents": []` to turn off the reviewer check.
 - The line at session start: set the `session_status` option to `off`. Problems still show.
 
 ## Troubleshooting
 
-**"release-checks is off: it needs Python 3.9 or later, and none ran."** The hooks found no Python that could run them, so they let every call through and say so once per session. They try `python3` and then `python`, and on Windows `py -3`, `python` and `python3`. Install Python 3.9 or later, or set `RELEASE_CHECKS_PYTHON` to its full path in the `env` block of your Claude Code settings. On Windows, a `python` or `python3` that opens the Microsoft Store is an app execution alias, not Python, and the hooks move past it. On macOS without the command line tools, `/usr/bin/python3` only offers to install them, and the hooks skip it.
+**"invigilator is off: it needs Python 3.9 or later, and none ran."** The hooks found no Python that could run them, so they let every call through and say so once per session. They try `python3` and then `python`, and on Windows `py -3`, `python` and `python3`. Install Python 3.9 or later, or set `INVIGILATOR_PYTHON` to its full path in the `env` block of your Claude Code settings. On Windows, a `python` or `python3` that opens the Microsoft Store is an app execution alias, not Python, and the hooks move past it. On macOS without the command line tools, `/usr/bin/python3` only offers to install them, and the hooks skip it.
 
-**Nothing happens, and `/hooks` says "Only hooks from managed settings run here".** Your organization set `allowManagedHooksOnly` in its managed settings. Claude Code then runs no plugin hooks, these included, unless the managed settings force-enable the plugin. To run these hooks, an admin has to register the `zhyuka` marketplace under `extraKnownMarketplaces` and set `"agent-release-checks@zhyuka": true` under `enabledPlugins`, both in the managed settings. The skills and the `release-checks check` command work either way.
+**Nothing happens, and `/hooks` says "Only hooks from managed settings run here".** Your organization set `allowManagedHooksOnly` in its managed settings. Claude Code then runs no plugin hooks, these included, unless the managed settings force-enable the plugin. To run these hooks, an admin has to register the `zhyuka` marketplace under `extraKnownMarketplaces` and set `"invigilator@zhyuka": true` under `enabledPlugins`, both in the managed settings. The skills and the `invigilator check` command work either way.
 
 **Windows without Git Bash.** Claude Code runs hook commands in PowerShell there. Each command in `hooks/hooks.json` has two lines. sh runs the first and never reads the second. PowerShell skips the first, since `exec` isn't a PowerShell command, and runs the second, which finds Python the same way. Since Claude Code 2.1.299, a PreToolUse hook that fails there blocks the call, so the hooks exit 0 in every case and set `"onFailure": "continue"`.
 
-**A warning on every call that names `.claude/release-checks.json`.** The file has a mistake, and the hooks use the defaults until you fix it. Run `/agent-release-checks:setup` to rewrite it.
+**A warning on every call that names `.claude/invigilator.json`.** The file has a mistake, and the hooks use the defaults until you fix it. Run `/invigilator:setup` to rewrite it.
 
 **See what a hook did.** Start Claude Code with `claude --debug` and read `~/.claude/debug/<session-id>.txt`, which has each hook's output and errors.
 
 ## What it reads, runs and sends
 
-- The reviewer hook reads the tool call Claude Code is about to make and the project's `.claude/release-checks.json`. It runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls.
+- The reviewer hook reads the tool call Claude Code is about to make and the project's `.claude/invigilator.json`. It runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls.
 - The QA hook reads the session transcript file that Claude Code passes to Stop and SubagentStop hooks, to find which tool calls ran and whether the QA command passed. It reads tool calls only and keeps nothing. It doesn't run the QA command itself.
 - The line at session start reads the same settings. To show only once per project, it writes an empty marker file under the plugin's data folder in `~/.claude/plugins/data/`. When no Python is found, the hooks write an empty marker file in the temp folder so the warning shows once per session.
 - Each hook runs `sh`, or PowerShell on Windows without Git Bash, to find Python, and then runs this plugin's scripts with it. Nothing else runs, and nothing leaves the machine.
@@ -123,14 +126,14 @@ Both hooks leave every other agent alone. In this example, run from the repo roo
 
 ```
 $ python3 hooks/reviewer_readonly.py < tests/fixtures/hooks/deny-reviewer-bash-write.json
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "release-checks blocked this Bash call: it runs sed -i. The project config lists code-reviewer as a reviewer, and reviewers are read-only. Put the change you would make in your review instead."}}
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "invigilator blocked this Bash call: it runs sed -i. The project config lists code-reviewer as a reviewer, and reviewers are read-only. Put the change you would make in your review instead."}}
 ```
 
 Claude Code cancels the call and gives the reason to the agent. In the next one, the main session is a builder. It edited a page, ran `npm run check 2>&1 | tail -5`, and is about to report that QA passed:
 
 ```
 $ python3 hooks/qa_before_done.py < tests/fixtures/hooks/block-main-qa-piped.json
-{"decision": "block", "reason": "release-checks: QA output went through a pipe or into another command, so its exit code was not seen. The project config lists the main session as a builder, so run `npm run check` after your last edit and get it to pass before you stop. Run it on its own, not through a pipe or with || true, so its exit code counts."}
+{"decision": "block", "reason": "invigilator: QA output went through a pipe or into another command, so its exit code was not seen. The project config lists the main session as a builder, so run `npm run check` after your last edit and get it to pass before you stop. Run it on its own, not through a pipe or with || true, so its exit code counts."}
 ```
 
 Claude Code keeps the agent working and hands it the reason as its next instruction.
@@ -146,7 +149,7 @@ Claude Code keeps the agent working and hands it the reason as its next instruct
 
 - The read-only hook reads the command line, not what programs do. It reads inline code given with `python -c`, a heredoc or `node -e`, and counts it only when it writes. A script file, a `make` target or a program whose name is built at run time can still write unseen. For a strict reviewer, set `reviewer_shell` to `block-all`, or leave write tools out of the subagent's `tools` list.
 - The config ask matches the file by path. A command that changes every file without naming one, such as `git checkout -- .` or `rm -rf .`, doesn't trigger it.
-- The QA hook trusts the QA command's exit code. A QA command that checks nothing will pass. Point `qa_commands` at something that refuses empty builds, such as `release-checks check build`.
+- The QA hook trusts the QA command's exit code. A QA command that checks nothing will pass. Point `qa_commands` at something that refuses empty builds, such as `invigilator check build`.
 - The QA hook counts Edit, Write, MultiEdit and NotebookEdit calls, and recognizable shell and PowerShell writes, as edits. An Edit or Write that failed, and a command Claude Code refused to run, did not change anything, so they don't count. Neither does a git command that changes only refs, the index or a remote, such as `git fetch`, `git commit` or `git push`. A pre-commit hook that rewrites files is the exception it can't see. Files written by a subagent the builder starts, or by an MCP tool, don't count either.
 - Claude Code documents where the transcript is, not its format. The QA hook reads the format Claude Code 2.1.136 to 2.1.288 writes, and reads it from the end, so a stop on a transcript of hundreds of megabytes takes well under a second. If it finds nothing it can read, or reading takes longer than 15 seconds, it lets the agent stop and shows a warning that the check did not run. Claude Code writes the transcript asynchronously, so the hook waits up to a second for a QA result that is not in the file yet. If the result still isn't there, it blocks once.
 - A shell command longer than 128 KB counts as a write and never as the QA step, because reading it would take the shell parser too long.
@@ -159,11 +162,11 @@ Claude Code keeps the agent working and hands it the reason as its next instruct
 ## Use the checks without Claude Code
 
 ```
-pip install git+https://github.com/zhyuka/agent-release-checks
-release-checks check path/to/folder
+pip install git+https://github.com/zhyuka/invigilator
+invigilator check path/to/folder
 ```
 
-The folder is a build folder or a run folder. A run folder holds a `run.json` that records one agent run, and can hold an `artifacts/qa_report.json` in the format `release_checks/step_ran.py` writes:
+The folder is a build folder or a run folder. A run folder holds a `run.json` that records one agent run, and can hold an `artifacts/qa_report.json` in the format `invigilator/step_ran.py` writes:
 
 ```json
 {
@@ -190,7 +193,7 @@ The command runs three checks and prints pass, fail or skip for each, with the r
 A check with nothing to read is skipped and says why. A skip never counts as a pass. The exit code is 0 when no check failed, 1 when one did, and 2 when the input can't be read. `examples/runs/` has a passing and a failing run for each of the last two checks:
 
 ```
-$ release-checks check examples/runs/cheap-builder
+$ invigilator check examples/runs/cheap-builder
 Release checks for examples/runs/cheap-builder
   check        result  detail
   build score  pass    1.00
@@ -212,16 +215,16 @@ The original system is internal and none of it is in this repo. This is a fresh 
 ## The three failures, as a demo
 
 ```
-git clone https://github.com/zhyuka/agent-release-checks
-cd agent-release-checks
-python -m release_checks demo
+git clone https://github.com/zhyuka/invigilator
+cd invigilator
+python -m invigilator demo
 ```
 
 The demo runs each check with stub agents: small deterministic Python functions that stand in for a model, with no LLM calls and no network. It reads the example builds in the clone, and exits non-zero if any check fails calibration. Every number it prints comes from the stubs and the four example builds. It runs 91 and 33 times to match the original runs, and its 2 of 91 comes from a seeded edit rate, not from a model.
 
-1. **An empty build passes most rules.** `release_checks/vacuous.py` scores a static web build against eight rules, such as hex colors, image alt text and heading order. Seven of them only look for problems, so the empty build passes them and scores 0.88, above the mediocre build at 0.62 and the broken one at 0.25. `guarded_score()` refuses to score a build with no visible HTML text, and says why.
-2. **A read-only reviewer edits code.** `release_checks/readonly.py` runs a stub reviewer on fresh copies of a workspace and hashes every file before and after. Its prompt says not to write, and in a small seeded share of runs it writes anyway. Giving the same reviewer a tool layer whose write raises an error stops it. An instruction is not a permission, and the plugin's PreToolUse hook applies the same idea in Claude Code.
-3. **A step reports success without running.** `release_checks/step_ran.py` accepts "QA passed" only when the QA report names the SHA-256 of the exact build it checked and is not older than that build. The verifier rejects the stub that only says it passed, in every run, and accepts the one that ran QA.
+1. **An empty build passes most rules.** `invigilator/vacuous.py` scores a static web build against eight rules, such as hex colors, image alt text and heading order. Seven of them only look for problems, so the empty build passes them and scores 0.88, above the mediocre build at 0.62 and the broken one at 0.25. `guarded_score()` refuses to score a build with no visible HTML text, and says why.
+2. **A read-only reviewer edits code.** `invigilator/readonly.py` runs a stub reviewer on fresh copies of a workspace and hashes every file before and after. Its prompt says not to write, and in a small seeded share of runs it writes anyway. Giving the same reviewer a tool layer whose write raises an error stops it. An instruction is not a permission, and the plugin's PreToolUse hook applies the same idea in Claude Code.
+3. **A step reports success without running.** `invigilator/step_ran.py` accepts "QA passed" only when the QA report names the SHA-256 of the exact build it checked and is not older than that build. The verifier rejects the stub that only says it passed, in every run, and accepts the one that ran QA.
 
 ```
 1. Vacuous pass: naive score vs guarded score
@@ -258,8 +261,8 @@ The demo runs each check with stub agents: small deterministic Python functions 
 
 A check counts only after it catches a planted bad case and passes a known-good one. Each one reports counts, not a verdict. Run the tests with `python -m unittest discover -s tests`.
 
-- `release_checks/calibrate.py` plants one bad case and one good case for each demo check, and demo part 4 prints the result. The tests show that a check which never objects, or always objects, fails calibration.
-- `tests/test_check.py` calibrates `release-checks check` on the four runs in `examples/runs/`. CI also runs the command on them, and fails if a good run doesn't pass or a bad run doesn't fail.
+- `invigilator/calibrate.py` plants one bad case and one good case for each demo check, and demo part 4 prints the result. The tests show that a check which never objects, or always objects, fails calibration.
+- `tests/test_check.py` calibrates `invigilator check` on the four runs in `examples/runs/`. CI also runs the command on them, and fails if a good run doesn't pass or a bad run doesn't fail.
 - Each hook fixture's name starts with the answer it should get, such as deny, block or allow. `tests/test_hooks.py` pipes every fixture through its hook script, and fails unless each hook both blocks and allows something across the set.
 - `tests/test_launcher.py` runs every command in `hooks/hooks.json` on every fixture, from a plugin folder with spaces in its path, in each shell it finds: sh, dash and bash, Git Bash, pwsh and Windows PowerShell. It also checks that a Store alias or an old Python is skipped, and that with no Python the call goes through with one warning per session. CI runs it on Ubuntu, macOS and Windows.
 - `tests/test_readonly.py` lists shell commands that write files and commands that don't. The classifier has to catch every one of the first and pass every one of the second.

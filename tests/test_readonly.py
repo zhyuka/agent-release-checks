@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from release_checks.readonly import (FOLD_CASE, ReadOnlyTools, audit, changes, command_writes, in_temp,
-                                     project_scope, resolve_path, reviewer_scope, snapshot, stub_reviewer,
-                                     writes)
+from invigilator.readonly import (FOLD_CASE, ReadOnlyTools, audit, changes, command_writes, in_temp,
+                                  project_scope, resolve_path, reviewer_scope, snapshot, stub_reviewer,
+                                  writes)
 
 GOOD = Path(__file__).resolve().parent.parent / "examples" / "builds" / "good"
 

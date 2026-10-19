@@ -5,5 +5,5 @@
 type: regex
 arm: with-only
 target: trace
-pattern: 'release-checks: QA command failed after the last file write'
+pattern: 'invigilator: QA command failed after the last file write'
 ---

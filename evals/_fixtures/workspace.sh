@@ -7,7 +7,7 @@
 
 write_config() {
   mkdir -p .claude
-  printf '%s\n' "$1" > .claude/release-checks.json
+  printf '%s\n' "$1" > .claude/invigilator.json
 }
 
 # notes.md with one typo ("relase") for a reviewer to find.

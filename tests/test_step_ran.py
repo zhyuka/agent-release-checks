@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_checks.runlog import ToolCall
-from release_checks.step_ran import (REPORT, build_sha256, cheap_agent, qa_agent, qa_in_command,
-                                     qa_ran, trial, verify)
+from invigilator.runlog import ToolCall
+from invigilator.step_ran import (REPORT, build_sha256, cheap_agent, qa_agent, qa_in_command,
+                                  qa_ran, trial, verify)
 
 GOOD = Path(__file__).resolve().parent.parent / "examples" / "builds" / "good"
 QA = ["npm run check"]

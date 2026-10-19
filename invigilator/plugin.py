@@ -26,7 +26,7 @@ HOOK_DIR = Path(__file__).resolve().parent.parent / "hooks"
 SCRIPTS = {"reviewer_readonly": HOOK_DIR / "reviewer_readonly.py",
            "qa_before_done": HOOK_DIR / "qa_before_done.py"}
 STATUS_MODES = ("once", "always", "off")
-SETUP_SKILL = "/agent-release-checks:setup"
+SETUP_SKILL = "/invigilator:setup"
 
 
 def run(argv):
@@ -41,11 +41,11 @@ def run(argv):
             code = session_status() if name == "session_status" else _run_script(name)
     except Exception as err:  # a broken hook must not block the user's work
         traceback.print_exc()
-        _say(f"release-checks: the {name or 'unnamed'} hook failed ({type(err).__name__}: {err}), "
+        _say(f"invigilator: the {name or 'unnamed'} hook failed ({type(err).__name__}: {err}), "
              "so it let this call through")
         return 0
     if code:
-        _say(f"release-checks: the {name} hook exited with code {code}, so it let this call "
+        _say(f"invigilator: the {name} hook exited with code {code}, so it let this call "
              "through. Run claude --debug to see why")
     else:
         sys.stdout.write(answer.getvalue())
@@ -89,7 +89,7 @@ def session_status(environ=None):
                         "\"always\" or \"off\", so it is ignored")
         mode = "once"
     line = status_line(config, from_file=not problem and (Path(project) / hooks.CONFIG).is_file())
-    shown = [f"release-checks: {p}." for p in problems]
+    shown = [f"invigilator: {p}." for p in problems]
     if mode == "always" or (mode == "once" and _first_time(environ, project, line)):
         shown.append(line)
     if shown:
@@ -99,7 +99,7 @@ def session_status(environ=None):
 
 def status_line(config, from_file=False):
     """One line that says which agents the hooks hold to which rule."""
-    parts = ["release-checks is on."]
+    parts = ["invigilator is on."]
     if config["reviewer_agents"]:
         rule = ("can't write files or run shell commands" if config["reviewer_shell"] == "block-all"
                 else "can't write files")

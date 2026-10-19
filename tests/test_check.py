@@ -6,11 +6,11 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from release_checks.calibrate import calibrate
-from release_checks.check import check_folder
-from release_checks.cli import main
-from release_checks.runlog import RunLogError
-from release_checks.step_ran import REPORT, build_sha256, qa_agent
+from invigilator.calibrate import calibrate
+from invigilator.check import check_folder
+from invigilator.cli import main
+from invigilator.runlog import RunLogError
+from invigilator.step_ran import REPORT, build_sha256, qa_agent
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 RUNS, GOOD = EXAMPLES / "runs", EXAMPLES / "builds" / "good"

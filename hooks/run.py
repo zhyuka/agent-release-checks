@@ -1,4 +1,4 @@
-"""Run one release-checks hook: python run.py reviewer_readonly | qa_before_done | session_status
+"""Run one invigilator hook: python run.py reviewer_readonly | qa_before_done | session_status
 
 hooks/run.sh, or the PowerShell line in hooks.json, calls this with each
 Python it finds. The exit code is for that launcher, not for Claude Code:
@@ -17,10 +17,10 @@ if sys.version_info < (3, 9):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
-    from release_checks import plugin
+    from invigilator import plugin
 except Exception as err:
     import json
-    print(json.dumps({"systemMessage": "release-checks is off: it could not load (%s)." % err}))
+    print(json.dumps({"systemMessage": "invigilator is off: it could not load (%s)." % err}))
     sys.exit(0)
 
 sys.exit(plugin.run(sys.argv[1:]))
