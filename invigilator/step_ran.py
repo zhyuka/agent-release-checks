@@ -6,7 +6,8 @@ and is not older than that build.
 For a real agent run, qa_ran() reads the tool calls instead: the QA command
 has to succeed after the agent's last file write. wrote() says which calls
 count as writes. The invigilator command uses it on a run.json, and the
-Stop hook on a session transcript.
+Stop hook on a session transcript. check_edit() is the Stop hook's alone: it
+finds a change to a file the QA command runs, made while QA was failing.
 """
 import hashlib
 import json
@@ -50,8 +51,16 @@ def cheap_agent(build, artifacts):
 
 @dataclass
 class Verdict:
+    """accepted and reason are what every check gives. A verdict from tool calls also has a kind:
+    "passed", "failed" (QA ran on its own after the last write and failed), "not-run", "hidden"
+    (a pipe, || true or a later command decided the exit code), "unrecorded", or "check-edited"
+    (the Stop hook's: a file the QA command runs changed after QA failed). write is the call that
+    made the last file write, when there was one, and check_file names the changed file."""
     accepted: bool
     reason: str
+    kind: str = ""
+    write: object = None
+    check_file: str = ""
 
 
 def verify(claim, build, artifacts):
@@ -287,20 +296,43 @@ def qa_ran(calls, qa_commands, ran_before=False, written=None, scope=None):
     written = last_write(calls, qa_commands, scope) if written is None else written
     after = [(status, call) for i, status, call in runs if i > written]
     names = " or ".join(repr(qa) for qa in qa_commands)
+    write = calls[written] if written >= 0 else None
+
+    def verdict(accepted, reason, kind):
+        return Verdict(accepted, reason, kind, write)
+
     if not runs and ran_before is False:
-        return Verdict(False, f"QA command {names} never ran")
+        return verdict(False, f"QA command {names} never ran", "not-run")
     if not runs and ran_before is None:
-        return Verdict(False, f"QA command {names} did not run after the last file write")
+        return verdict(False, f"QA command {names} did not run after the last file write", "not-run")
     if not after:
-        return Verdict(False, f"QA command {names} ran before the last file write, not after it")
+        return verdict(False, f"QA command {names} ran before the last file write, not after it", "not-run")
     if any(status == "seen" and call.ok is True for status, call in after):
-        return Verdict(True, "QA command passed after the last file write")
+        return verdict(True, "QA command passed after the last file write", "passed")
     if any(status == "seen" and call.ok is False for status, call in after):
-        return Verdict(False, "QA command failed after the last file write")
+        return verdict(False, "QA command failed after the last file write", "failed")
     if any(status == "masked" for status, _ in after):
-        return Verdict(False, "QA output went through a pipe or into another command, "
-                              "so its exit code was not seen")
-    return Verdict(False, "QA command ran but its result was not recorded")
+        return verdict(False, "QA output went through a pipe or into another command, "
+                              "so its exit code was not seen", "hidden")
+    return verdict(False, "QA command ran but its result was not recorded", "unrecorded")
+
+
+def check_edit(calls, qa_commands, checks):
+    """(call, name) for the first of calls that wrote a file the QA command runs while QA was
+    failing, or (None, ""). checks maps each such file's name to a readonly.files_scope() for it.
+
+    QA is failing from a QA run that failed with its exit code in plain view until one that
+    passed. A pass after such a write doesn't end it, since the pass may come from the change."""
+    failing = False
+    for call in calls:
+        status = qa_status(call, qa_commands)
+        if status == "seen" and call.ok is not None:
+            failing = call.ok is False
+        elif failing and not status:
+            for name, scope in checks.items():
+                if wrote(call, qa_commands, scope):
+                    return call, name
+    return None, ""
 
 
 def run_pipeline(agent, source, run=1):

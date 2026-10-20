@@ -25,12 +25,20 @@ QA = ROOT / "hooks" / "qa_before_done.py"
 QA_COMMANDS = ["npm run check"]
 
 
-def run_hook(payload, project=FIXTURES / "project", timeout=60):
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+def run_hook(payload, project=FIXTURES / "project", timeout=60, data=None, env=None):
+    """Run the Stop hook on payload. data is the plugin data folder, which keeps the stops the
+    hook blocked once; without one, each run gets a fresh folder."""
+    full_env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_DATA")}
     if project:
-        env["CLAUDE_PROJECT_DIR"] = str(project)
-    done = subprocess.run([sys.executable, str(QA)], input=payload, capture_output=True, text=True,
-                          cwd=ROOT, env=env, timeout=timeout)
+        full_env["CLAUDE_PROJECT_DIR"] = str(project)
+    full_env.update(env or {})
+    with tempfile.TemporaryDirectory() as fresh:
+        if data is None:
+            full_env.setdefault("CLAUDE_PLUGIN_DATA", fresh)
+        elif data:
+            full_env["CLAUDE_PLUGIN_DATA"] = str(data)
+        done = subprocess.run([sys.executable, str(QA)], input=payload, capture_output=True, text=True,
+                              cwd=ROOT, env=full_env, timeout=timeout)
     return done.returncode, json.loads(done.stdout) if done.stdout.strip() else {}, done.stderr
 
 
@@ -391,9 +399,220 @@ class BadInputTest(TempDir):
 
     def test_a_stop_hook_loop_gets_the_same_answer_each_time(self):
         # Claude Code ends the turn itself after 8 blocks in a row (CLAUDE_CODE_STOP_HOOK_BLOCK_CAP).
-        path = self.transcript(lines(*CHECK, *WRITE, *DONE))
-        answers = {self.outcome(stop_event(path, stop_hook_active=True)) for _ in range(3)}
-        self.assertEqual(answers, {"block"})
+        # QA that did not run after the last write, or ran hidden, or has no result, blocks every
+        # stop, with the same data folder each time.
+        piped = [tool_use("toolu_p", "Bash", {"command": "npm run check | tail -5"}), tool_result("toolu_p")]
+        unrecorded = [tool_use("toolu_u", "Bash", {"command": "npm run check"}),
+                      tool_result("toolu_u", "Command running in background with ID: b1.")]
+        for name, records in (("ran before", CHECK + WRITE), ("never ran", WRITE), ("piped", WRITE + piped),
+                              ("unrecorded", WRITE + unrecorded)):
+            path = self.transcript(lines(*records, *DONE), f"{name}.jsonl")
+            data = self.tmp / f"data-{name}"
+            answers = [self.outcome(stop_event(path, stop_hook_active=True), data=data) for _ in range(3)]
+            self.assertEqual(answers, ["block"] * 3, name)
+
+
+def edit(call_id, path, old="Helo", new="Hello"):
+    return [tool_use(call_id, "Edit", {"replace_all": False, "file_path": str(path),
+                                       "old_string": old, "new_string": new}),
+            tool_result(call_id, "The file has been updated successfully.")]
+
+
+def qa_run(call_id, passed, command="python3 qa.py"):
+    return [tool_use(call_id, "Bash", {"command": command}),
+            tool_result(call_id, "qa: PASS, all checks passed" if passed else
+                        "Exit code 1\nqa: FAIL release-notes check", error=not passed)]
+
+
+class BlockOnceTest(TempDir):
+    """QA that ran on its own after the last write and failed, or that passed only after the
+    builder changed a file the QA command runs while QA was failing, blocks the first stop. A
+    later stop with no new write goes through, with a message to the user."""
+
+    QA = ["python3 qa.py"]
+
+    def setUp(self):
+        super().setUp()
+        self.project, self.data = self.tmp / "project", self.tmp / "data"
+        (self.project / ".claude").mkdir(parents=True)
+        (self.project / ".claude" / "invigilator.json").write_text(
+            json.dumps({"builder_agents": ["main", "*builder*"], "qa_commands": self.QA}))
+        self.greet, self.qa = self.project / "greet.py", self.project / "qa.py"
+        self.greet.write_text("")
+        self.qa.write_text("")
+        self.records = []
+
+    def add(self, *records):
+        """Add records to the transcript, and give its path."""
+        self.records.extend(records)
+        return self.transcript(lines(*self.records, *DONE))
+
+    def stop(self, path, data=None, session="abc123", subagent=False, env=None):
+        if subagent:
+            payload = json.dumps({"session_id": session, "transcript_path": str(self.tmp / "main.jsonl"),
+                                  "agent_transcript_path": str(path), "agent_id": "a1",
+                                  "agent_type": "page-builder", "cwd": str(self.project),
+                                  "hook_event_name": "SubagentStop", "stop_hook_active": False})
+        else:
+            payload = stop_event(path, cwd=str(self.project), session_id=session)
+        code, output, stderr = run_hook(payload, project=self.project,
+                                        data=self.data if data is None else data, env=env)
+        self.assertNotIn("Traceback", stderr)
+        self.assertEqual(code, 0, stderr)
+        return output
+
+    def test_a_visible_failure_blocks_once_then_lets_the_agent_stop(self):
+        path = self.add(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False))
+        first = self.stop(path)
+        self.assertEqual(first["decision"], "block")
+        self.assertIn("QA (`python3 qa.py`) failed after your last edit. Fix the cause and run it again.",
+                      first["reason"])
+        self.assertIn("don't edit the QA command, the files it runs (qa.py) or .claude/invigilator.json",
+                      first["reason"])
+        self.assertNotIn("systemMessage", first)
+        told = ("invigilator: QA (`python3 qa.py`) failed after the main session's last edit, and the "
+                "main session stopped without passing it.")
+        self.assertEqual(self.stop(path), {"systemMessage": told})
+        self.assertEqual(self.stop(path, session="another")["decision"], "block", "each session has its own")
+        # Running QA again without a write is the same state, whatever it gives.
+        path = self.add(*qa_run("toolu_q2", False), *qa_run("toolu_q3", False, "python3 qa.py 2>&1 | tail -3"))
+        self.assertEqual(self.stop(path), {"systemMessage": told})
+        # A new write starts a new state: QA has to run after it, and a failure blocks once again.
+        path = self.add(*edit("toolu_e2", self.greet, "Hello", "Hello!"))
+        self.assertIn("ran before the last file write", self.stop(path)["reason"])
+        self.assertIn("ran before the last file write", self.stop(path)["reason"])
+        path = self.add(*qa_run("toolu_q4", False))
+        self.assertEqual(self.stop(path)["decision"], "block")
+        self.assertEqual(self.stop(path), {"systemMessage": told})
+        path = self.add(*qa_run("toolu_q5", True))
+        self.assertEqual(self.stop(path), {}, "a pass after the last write lets it stop quietly")
+
+    def test_a_change_to_the_check_after_a_failure_does_not_count(self):
+        for how, change in (
+                ("Edit", edit("toolu_c", self.qa, "failures.append(", "pass  # ")),
+                ("Write", [tool_use("toolu_c", "Write", {"file_path": str(self.qa), "content": "pass\n"}),
+                           tool_result("toolu_c")]),
+                ("sed -i", [tool_use("toolu_c", "Bash", {"command": "sed -i 's/failures.append/pass #/' qa.py"}),
+                            tool_result("toolu_c")]),
+                ("inline Python", [tool_use("toolu_c", "Bash", {
+                    "command": "python3 - <<'EOF'\nopen('qa.py', 'w').write('pass')\nEOF"}), tool_result("toolu_c")])):
+            data = self.tmp / f"data-{how}"
+            path = self.transcript(lines(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False), *change,
+                                         *qa_run("toolu_q2", True), *DONE), f"{how}.jsonl")
+            first = self.stop(path, data=data)
+            self.assertEqual(first.get("decision"), "block", how)
+            self.assertIn("you changed qa.py, which the QA command runs, after QA failed, and a pass that "
+                          "comes from changing the check doesn't count. Undo that change, or stop and tell "
+                          "the user what you changed and why.", first["reason"])
+            told = ("invigilator: the main session changed qa.py, which QA (`python3 qa.py`) runs, after QA "
+                    "failed, and then stopped. The QA pass after that change doesn't count.")
+            self.assertEqual(self.stop(path, data=data), {"systemMessage": told}, how)
+            path = self.transcript(lines(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False), *change,
+                                         *qa_run("toolu_q2", True), *qa_run("toolu_q3", True), *DONE), f"{how}.jsonl")
+            self.assertEqual(self.stop(path, data=data), {"systemMessage": told}, "a QA re-run is the same state")
+        # Undoing the change is a new write, so the stop after it blocks once more.
+        path = self.transcript(lines(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False),
+                                     *edit("toolu_c", self.qa, "failures.append(", "pass  # "),
+                                     *qa_run("toolu_q2", True), *edit("toolu_u", self.qa, "pass  # ", "failures.append("),
+                                     *qa_run("toolu_q3", False), *DONE), "undone.jsonl")
+        self.assertIn("failed after your last edit", self.stop(path, data=self.tmp / "data-Edit")["reason"])
+
+    def test_a_change_to_the_check_before_any_failure_is_normal_work(self):
+        change = edit("toolu_c", self.qa, "x = 1", "x = 2")
+        for name, records in (
+                ("before any QA run", change + qa_run("toolu_q1", True)),
+                ("after a pass", edit("toolu_e1", self.greet) + qa_run("toolu_q1", True) + change
+                 + qa_run("toolu_q2", True)),
+                ("after a pass ended a failure", edit("toolu_e1", self.greet) + qa_run("toolu_q1", False)
+                 + edit("toolu_e2", self.greet, "Hello", "Hello!") + qa_run("toolu_q2", True) + change
+                 + qa_run("toolu_q3", True)),
+                ("a hidden failure", edit("toolu_e1", self.greet) + qa_run("toolu_q1", False, "python3 qa.py | tail")
+                 + change + qa_run("toolu_q2", True)),
+                ("fixing the cause", edit("toolu_e1", self.greet) + qa_run("toolu_q1", False)
+                 + edit("toolu_e2", self.greet, "Hello", "Hello!") + qa_run("toolu_q2", True))):
+            path = self.transcript(lines(*records, *DONE), f"{name}.jsonl")
+            self.assertEqual(self.stop(path, data=self.tmp / f"data-{name}"), {}, name)
+
+    def test_the_files_a_qa_command_runs(self):
+        (self.project / "scripts").mkdir()
+        (self.project / "scripts" / "check.sh").write_text("")
+        (self.tmp / "outside.py").write_text("")
+        commands = ["python3 qa.py", "bash scripts/check.sh", "npm run check", "make check",
+                    "python3 ../outside.py", "python3 missing.py", "pytest scripts", "python3 ./qa.py"]
+        self.assertEqual(hooks.check_files(commands, str(self.project)),
+                         {"qa.py": str(self.qa), "scripts/check.sh": str(self.project / "scripts" / "check.sh")})
+        self.assertEqual(hooks.check_files(["npm run check", "make check"], str(self.project)), {})
+
+    def test_a_marker_that_cannot_be_written_blocks_as_before(self):
+        path = self.add(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False))
+        not_a_folder = self.tmp / "not-a-folder"
+        not_a_folder.write_text("")
+        for _ in range(2):
+            output = self.stop(path, data=not_a_folder)
+            self.assertEqual(output["decision"], "block")
+            self.assertIn("could not record this block", output["systemMessage"])
+            self.assertIn("so it will block the next stop too", output["systemMessage"])
+
+    def test_without_a_plugin_data_folder_the_marker_goes_in_the_temp_folder(self):
+        temp = self.tmp / "temp"
+        temp.mkdir()
+        env = {"TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)}
+        path = self.add(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False))
+        self.assertEqual(self.stop(path, data="", env=env)["decision"], "block")
+        self.assertEqual(len(list((temp / "invigilator-qa-blocked").iterdir())), 1)
+        self.assertNotIn("decision", self.stop(path, data="", env=env))
+
+    def test_subagent_stops_follow_the_same_rules(self):
+        path = self.add(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False))
+        self.assertIn("failed after your last edit", self.stop(path, subagent=True)["reason"])
+        self.assertEqual(self.stop(path, subagent=True), {"systemMessage": (
+            "invigilator: QA (`python3 qa.py`) failed after page-builder's last edit, and page-builder "
+            "stopped without passing it.")})
+        path = self.add(*edit("toolu_c", self.qa, "failures.append(", "pass  # "), *qa_run("toolu_q2", True))
+        self.assertIn("you changed qa.py", self.stop(path, subagent=True)["reason"])
+        self.assertIn("page-builder changed qa.py", self.stop(path, subagent=True)["systemMessage"])
+
+    def test_reading_from_the_end_agrees_with_reading_from_the_start(self):
+        scope = readonly.project_scope(str(self.project), str(self.project))
+        checks = {"qa.py": readonly.files_scope([str(self.qa)], str(self.project))}
+        change = edit("toolu_c", self.qa, "failures.append(", "pass  # ")
+        failed, passed = qa_run("toolu_q1", False), qa_run("toolu_q2", True)
+        cases = {
+            "changed after a failure": edit("toolu_e1", self.greet) + failed + change + passed,
+            "changed, then more work": edit("toolu_e1", self.greet) + failed + change + passed
+            + edit("toolu_e2", self.greet, "a", "b") + qa_run("toolu_q3", True),
+            "a copied pass": edit("toolu_e1", self.greet) + failed + change + passed + passed,
+            "changed before": change + edit("toolu_e1", self.greet) + failed + edit("toolu_e2", self.greet)
+            + passed,
+            "failed": edit("toolu_e1", self.greet) + failed,
+            "failed after a change": edit("toolu_e1", self.greet) + failed + change + qa_run("toolu_q3", False),
+        }
+        kinds = {}
+        for name, records in cases.items():
+            path = self.transcript(lines(*records, *DONE), f"{name}.jsonl")
+            forward = hooks._verdict(runlog.read_transcript(path), self.QA, scope=scope, checks=checks)
+            backward, _ = hooks.stop_verdict(path, self.QA, runlog.Deadline(30), scope, checks)
+            # A pass read from the end does not look back for the last write, which only names a state to block.
+            facts = [(v.accepted, v.reason, v.kind, None if v.accepted else v.write.id, v.check_file)
+                     for v in (forward, backward)]
+            self.assertEqual(facts[0], facts[1], name)
+            kinds[name] = facts[1][2:4]
+        self.assertEqual(kinds, {"changed after a failure": ("check-edited", "toolu_c"),
+                                 "changed, then more work": ("check-edited", "toolu_e2"),
+                                 "a copied pass": ("check-edited", "toolu_c"),
+                                 "changed before": ("passed", None),
+                                 "failed": ("failed", "toolu_e1"),
+                                 "failed after a change": ("failed", "toolu_c")})
+
+    def test_only_the_lines_that_decide_are_parsed(self):
+        reads = [tool_use(f"toolu_r{n}", "Read", {"file_path": f"/p/src/{n}.js"}) for n in range(5000)]
+        path = self.add(*reads, *edit("toolu_e1", self.greet), *qa_run("toolu_q1", False),
+                        *edit("toolu_c", self.qa, "failures.append(", "pass  # "), *qa_run("toolu_q2", True))
+        checks = {"qa.py": readonly.files_scope([str(self.qa)], str(self.project))}
+        with mock.patch.object(runlog, "_parse", wraps=runlog._parse) as parse:
+            verdict, _ = hooks.stop_verdict(path, self.QA, runlog.Deadline(30), None, checks)
+        self.assertEqual(verdict.kind, "check-edited")
+        self.assertLess(parse.call_count, 15)
 
 
 if __name__ == "__main__":

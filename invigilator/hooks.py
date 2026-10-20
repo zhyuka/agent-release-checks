@@ -7,8 +7,12 @@ call that writes the config file below, since changing it can turn the checks of
 
 hooks/qa_before_done.py runs on Stop and SubagentStop. It blocks a builder
 from stopping when the transcript shows a file write after the last QA
-command that passed. It reads the transcript from the end and stops once it
-knows the answer, and lets the agent stop with a warning when it cannot read it.
+command that passed. When QA ran on its own after the last write and failed,
+or passed only after the builder changed a file the QA command runs while QA
+was failing, it blocks the first stop and lets a later one through with a
+message to the user, until the next write. It reads the transcript from the
+end and stops once it knows the answer, and lets the agent stop with a
+warning when it cannot read it.
 
 Both read the project config at .claude/invigilator.json:
 
@@ -33,10 +37,12 @@ the option, and qa_commands can only be set there, since a QA command
 belongs to a project.
 """
 import fnmatch
+import hashlib
 import json
 import os
 import shlex
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -169,13 +175,43 @@ RESULT_WAIT = 1.0  # how long to wait for a QA result Claude Code has not writte
 LOOK_BACK = 64 << 20
 
 
-def _verdict(calls, qa_commands, ran_before=False, scope=None):
+def _verdict(calls, qa_commands, ran_before=False, scope=None, checks=None):
     """step_ran.qa_ran() for calls, or None when nothing in calls wrote files. ran_before
-    says whether a QA command ran before the first of calls, or is None when that is not known."""
+    says whether a QA command ran before the first of calls, or is None when that is not known.
+    With checks, as for step_ran.check_edit(), a pass that came after a change to a file the QA
+    command runs, made while QA was failing, does not count."""
     written = step_ran.last_write(calls, qa_commands, scope)
     if written < 0:
         return None
-    return step_ran.qa_ran(calls, qa_commands, ran_before, written)
+    verdict = step_ran.qa_ran(calls, qa_commands, ran_before, written)
+    if verdict.accepted and checks:
+        edit, name = step_ran.check_edit(calls, qa_commands, checks)
+        if edit is not None:
+            return _check_edited(verdict.write, name)
+    return verdict
+
+
+def _check_edited(write, name):
+    return step_ran.Verdict(False, f"{name}, which the QA command runs, changed after QA failed",
+                            "check-edited", write, name)
+
+
+def check_files(qa_commands, project):
+    """{name: path} for the files the QA commands run: each word of a QA command that names an
+    existing file inside the project, resolved against the project root. name is the path from
+    the root, with forward slashes. `npm run check` or `make check` names none."""
+    root = os.path.abspath(project)
+    found = {}
+    for qa in qa_commands:
+        for word in shlex.split(qa):
+            path = os.path.normpath(os.path.join(root, word))
+            try:
+                name = os.path.relpath(path, root)
+            except ValueError:  # another drive on Windows
+                continue
+            if name != os.curdir and name.split(os.sep)[0] != os.pardir and os.path.isfile(path):
+                found.setdefault(Path(name).as_posix(), path)
+    return found
 
 
 class _Replayed(Exception):
@@ -218,12 +254,38 @@ def _ran_before(transcript, call, qa_commands):
     return False if floor == 0 else None
 
 
-def stop_verdict(path, qa_commands, deadline, scope=None):
+def _check_edit_before(transcript, call, qa_commands, checks):
+    """step_ran.check_edit() on the calls before call that run QA or name a file in checks.
+    Only the lines that hold a QA command or such a file's name are parsed, and only within
+    LOOK_BACK of call, so on a longer transcript a failure before that is not seen."""
+    needles = set(_qa_needles(qa_commands))
+    for name in checks:
+        for ascii_only in (True, False):
+            needles.add(json.dumps(name.rsplit("/", 1)[-1], ensure_ascii=ascii_only)[1:-1].encode("utf-8"))
+    found = {}  # id (or a stand-in) -> (offset, position in the line, call), the earliest copy
+    for offset, line in transcript.lines_with(tuple(needles), end=call.offset, floor=_floor(call)):
+        if runlog.TOOL_USE not in line:
+            continue
+        for n, earlier in enumerate(runlog.tool_uses(line)):
+            earlier.offset, earlier.end = offset, offset + len(line)
+            found[earlier.id or (offset, n)] = (offset, n, earlier)
+    calls = [c for _, _, c in sorted(found.values(), key=lambda item: item[:2])]
+    for earlier in calls:
+        if step_ran.qa_status(earlier, qa_commands) == "seen" or any(
+                step_ran.wrote(earlier, qa_commands, scope) for scope in checks.values()):
+            transcript.resolve(earlier)
+    return step_ran.check_edit(calls, qa_commands, checks)
+
+
+def stop_verdict(path, qa_commands, deadline, scope=None, checks=None):
     """(verdict, waiting) for the transcript at path, read from the end.
 
-    verdict is None when the agent wrote nothing. waiting is True when the newest QA run
-    after the last write has no result in the file yet, so a second look may find it.
-    With a scope, only the writes that land where it counts are writes."""
+    verdict is None when the agent wrote nothing. Its write is the last file write, except
+    on a pass, where the reading stops without looking for it. waiting is True when the
+    newest QA run after the last write has no result in the file yet, so a second look may
+    find it. With a scope, only the writes that land where it counts are writes. With checks,
+    as for step_ran.check_edit(), a pass that came after a change to a file the QA command
+    runs, made while QA was failing, is a "check-edited" verdict."""
     qa_status = step_ran.qa_status
 
     def wrote(call):
@@ -231,18 +293,26 @@ def stop_verdict(path, qa_commands, deadline, scope=None):
 
     with runlog.Transcript(path, deadline) as transcript:
         tail = []  # the calls after the one being looked at, newest first
+        edited = None  # (call, name) for a change to the check before the last pass
         try:
             for call in transcript.calls():
                 status = qa_status(call, qa_commands)
-                if status:
+                if status and edited is None:
                     transcript.resolve(call)
                     if status == "seen" and call.ok is True:
                         if _replayed(transcript, call):
                             raise _Replayed()
-                        return step_ran.Verdict(True, "QA command passed after the last file write"), False
+                        edit, name = _check_edit_before(transcript, call, qa_commands, checks) \
+                            if checks else (None, "")
+                        if edit is None:
+                            return step_ran.Verdict(True, "QA command passed after the last file write",
+                                                    "passed"), False
+                        edited = (edit, name)  # go on back to the last write, which names the state
                 elif wrote(call):
                     transcript.resolve(call)
                     if wrote(call):
+                        if edited:
+                            return _check_edited(call, edited[1]), False
                         calls = [call] + tail[::-1]
                         verdict = _verdict(calls, qa_commands, _ran_before(transcript, call, qa_commands), scope)
                         newest = next((c for c in tail if qa_status(c, qa_commands)), None)
@@ -251,10 +321,12 @@ def stop_verdict(path, qa_commands, deadline, scope=None):
                 tail.append(call)
         except _Replayed:
             calls = runlog.read_transcript(path, deadline)
-            return _verdict(calls, qa_commands, scope=scope), False
+            return _verdict(calls, qa_commands, scope=scope, checks=checks), False
+        if edited:
+            return _check_edited(*edited), False
         if transcript.calls_seen == 0 and (transcript.has_other_tool_use() or not transcript.holds_messages()):
             calls = runlog.read_transcript(path, deadline)  # raises when nothing in it is a message
-            return _verdict(calls, qa_commands, scope=scope), False
+            return _verdict(calls, qa_commands, scope=scope, checks=checks), False
         return None, False
 
 
@@ -293,30 +365,90 @@ def qa_before_done(event, config):
     deadline = runlog.Deadline(STOP_SECONDS)
     # Only writes inside the project need QA: notes in /tmp or ~/.claude don't. A write the
     # command line does not place counts wherever it is.
-    scope = readonly.project_scope(*_where(event))
+    project, cwd = _where(event)
+    scope = readonly.project_scope(project, cwd)
+    files = check_files(qa_commands, project)
+    checks = {name: readonly.files_scope([file], cwd) for name, file in files.items()}
     try:
         if not isinstance(path, (str, os.PathLike)) or not str(path):
             raise TypeError("the hook input has no transcript path")
         path = os.path.expanduser(path)
-        verdict, waiting = stop_verdict(path, qa_commands, deadline, scope)
+        verdict, waiting = stop_verdict(path, qa_commands, deadline, scope, checks)
         waited = 0.0
         while waiting and waited < RESULT_WAIT:  # Claude Code writes the transcript asynchronously
             size = os.stat(path).st_size
             time.sleep(0.1)
             waited += 0.1
             if os.stat(path).st_size != size:
-                verdict, waiting = stop_verdict(path, qa_commands, deadline, scope)
+                verdict, waiting = stop_verdict(path, qa_commands, deadline, scope, checks)
     except (OSError, TypeError, ValueError, RecursionError, MemoryError) as err:
         return {"systemMessage": f"invigilator: the QA check did not run for {label(agent)}, "
                                  f"because its transcript could not be read ({err})."}
     if verdict is None or verdict.accepted:
         return note or None  # nothing was built in this run, or QA passed after the last write
     commands = " or ".join(f"`{qa}`" for qa in qa_commands)
+    if verdict.kind in ("failed", "check-edited"):
+        return _block_once(event, verdict, agent, commands, list(files), note)
     return {**note, "decision": "block",
             "reason": (f"invigilator: {verdict.reason}. The project config lists {label(agent)} "
                        f"as a builder, so run {commands} after your last edit and get it to pass "
                        "before you stop. Run it on its own, not through a pipe or with || true, so "
                        "its exit code counts.")}
+
+
+def _block_once(event, verdict, agent, commands, files, note):
+    """Block the first stop after QA failed, or after the check changed, and let a later stop
+    with no new write through with a message to the user. A marker file says which states were
+    blocked already. When it can't be written, every such stop is blocked, as before."""
+    who = label(agent)
+    if verdict.kind == "failed":
+        runs = f" ({', '.join(files)})" if files else ""
+        reason = (f"invigilator: QA ({commands}) failed after your last edit. Fix the cause and run it "
+                  "again. If it can't pass here, for example because a check needs something this "
+                  f"environment lacks, don't edit the QA command, the files it runs{runs} or "
+                  f"{CONFIG.as_posix()} to get it to pass. Stop instead, and tell the user which "
+                  "check fails and why.")
+        told = f"invigilator: QA ({commands}) failed after {who}'s last edit, and {who} stopped without passing it."
+    else:
+        name = verdict.check_file
+        reason = (f"invigilator: you changed {name}, which the QA command runs, after QA failed, and a "
+                  "pass that comes from changing the check doesn't count. Undo that change, or stop "
+                  "and tell the user what you changed and why.")
+        told = (f"invigilator: {who} changed {name}, which QA ({commands}) runs, after QA failed, and "
+                "then stopped. The QA pass after that change doesn't count.")
+    messages = [note["systemMessage"]] if note else []
+    try:
+        if _blocked_before(_marker(event, verdict)):
+            return {"systemMessage": " ".join(messages + [told])}
+    except OSError as err:
+        messages.append(f"invigilator: it could not record this block ({err}), so it will block the next stop too.")
+    return {"systemMessage": " ".join(messages), "decision": "block", "reason": reason} if messages else \
+        {"decision": "block", "reason": reason}
+
+
+def _marker(event, verdict):
+    """The marker file for this session, the kind of verdict and the write that decided it, in
+    the plugin's data folder, or in the temp folder when there is none."""
+    write = verdict.write
+    write_id = getattr(write, "id", "") or json.dumps(
+        [getattr(write, "tool", ""), getattr(write, "input", {})], sort_keys=True, default=str)
+    key = f"{event.get('session_id')}\n{verdict.kind}\n{write_id}"
+    data = os.environ.get("CLAUDE_PLUGIN_DATA")
+    folder = Path(data) / "qa-blocked" if data else Path(tempfile.gettempdir()) / "invigilator-qa-blocked"
+    return folder / hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+
+
+def _blocked_before(marker):
+    """True when the marker exists. Otherwise it makes the marker and gives False. Raises
+    OSError when the marker can't be made."""
+    if os.path.lexists(marker):
+        return True
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.close(os.open(str(marker), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError:
+        return True
+    return False
 
 
 def main(hook):

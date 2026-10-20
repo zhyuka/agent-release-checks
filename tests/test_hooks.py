@@ -21,11 +21,15 @@ SCRIPTS = {"PreToolUse": READONLY, "Stop": QA, "SubagentStop": QA}
 
 
 def run_hook(script, payload, project=None):
+    """Run a hook script on payload. Each run gets its own plugin data folder, so every stop
+    is the first one for its state."""
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
     if project:
         env["CLAUDE_PROJECT_DIR"] = str(project)
-    done = subprocess.run([sys.executable, str(script)], input=payload, capture_output=True,
-                          text=True, cwd=ROOT, env=env, timeout=60)
+    with tempfile.TemporaryDirectory() as data:
+        env["CLAUDE_PLUGIN_DATA"] = data
+        done = subprocess.run([sys.executable, str(script)], input=payload, capture_output=True,
+                              text=True, cwd=ROOT, env=env, timeout=60)
     return done.returncode, json.loads(done.stdout) if done.stdout.strip() else {}, done.stderr
 
 
@@ -76,11 +80,12 @@ class HookScriptTest(unittest.TestCase):
                    ("block-main-no-qa", "block-main-qa-failed", "block-main-qa-piped",
                     "block-builder-qa-before-edit", "block-builder-qa-in-background")}
         self.assertIn("'npm run check' never ran", reasons["block-main-no-qa"])
-        self.assertIn("failed after the last file write", reasons["block-main-qa-failed"])
+        self.assertIn("QA (`npm run check`) failed after your last edit", reasons["block-main-qa-failed"])
+        self.assertIn("tell the user which check fails and why", reasons["block-main-qa-failed"])
         self.assertIn("exit code was not seen", reasons["block-main-qa-piped"])
         self.assertIn("before the last file write", reasons["block-builder-qa-before-edit"])
         self.assertIn("result was not recorded", reasons["block-builder-qa-in-background"])
-        self.assertTrue(all("run `npm run check`" in r for r in reasons.values()))
+        self.assertTrue(all("run `npm run check`" in r for name, r in reasons.items() if name != "block-main-qa-failed"))
 
     def test_unreadable_transcript_is_reported_not_passed_quietly(self):
         output = run_hook(QA, fixture("allow-missing-transcript"))[1]

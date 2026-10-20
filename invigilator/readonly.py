@@ -117,6 +117,11 @@ class _Inner(str):
     """A reason found inside a nested command or inline code, already matched to its target."""
 
 
+class _Placed(str):
+    """A reason from inline code whose target was placed and counts for the scope, so a scope
+    that leaves out writes it can't place, such as files_scope(), still counts it."""
+
+
 def _label(word):
     """A program's file name, as written, for reasons."""
     return word.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or word
@@ -305,7 +310,8 @@ class _Checker:
         what = analyze(code, self)
         if not what or isinstance(what, _Inner):
             return what
-        if self.touches is not None and not self.touches.mentions(self.expand(code)):
+        if self.touches is not None and not isinstance(what, _Placed) and \
+                not self.touches.mentions(self.expand(code)):
             return ""  # code is not a path, so a touch check matches it by the file's name
         return _Inner(f"runs {language} code that {what}")
 
@@ -554,6 +560,13 @@ def project_scope(project, cwd=""):
     where the check can't tell."""
     roots = _roots(project)
     return Scope(lambda path: path is None or not roots or _inside(path, roots), cwd)
+
+
+def files_scope(paths, cwd=""):
+    """A scope that counts a write only when it lands on one of paths, such as the files a QA
+    command runs. A write where the check can't tell where it lands does not count."""
+    keys = {_key(v) for p in paths for v in _variants(os.path.normpath(os.path.abspath(p)))}
+    return Scope(lambda path: path is not None and any(_key(v) in keys for v in _variants(path)), cwd)
 
 
 def reviewer_scope(project, cwd=""):
@@ -1421,8 +1434,10 @@ def _scoped(c, reason, targets, link_sources=()):
         return reason
     places = list(targets) + (list(link_sources) if c.touches.links else [])
     for t in (places or [None]):
-        if t is None or c.touches(t, c.cwd):
+        if t is None:
             return reason
+        if c.touches(t, c.cwd):
+            return _Placed(reason)
     return ""
 
 

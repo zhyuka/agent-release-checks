@@ -98,6 +98,8 @@ class PluginCopy:
                          "TEMP": str(self.tmp / "temp"), "TMP": str(self.tmp / "temp")})
         if python:
             full_env["INVIGILATOR_PYTHON"] = python
+        # A fresh plugin data folder each time, so a stop the QA hook blocks once blocks in every shell.
+        full_env["CLAUDE_PLUGIN_DATA"] = tempfile.mkdtemp(dir=self.tmp)
         full_env.update(env or {})
         done = subprocess.run(argv, input=payload.encode("utf-8"), capture_output=True,
                               cwd=cwd or self.root, env=full_env, timeout=120)
