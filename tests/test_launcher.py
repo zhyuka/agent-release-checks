@@ -172,7 +172,8 @@ class EveryShellTest(unittest.TestCase):
         payload = json.loads((FIXTURES / "deny-reviewer-write.json").read_text(encoding="utf-8"))
         for label, shell in SHELLS.items():
             with self.subTest(shell=label):
-                if shell[0] == "posix" and os.name != "nt":
+                if os.name != "nt":
+                    # Not pwsh's own folder: that is /usr/bin on Ubuntu, which holds a python3.
                     path = self.plugin.bin_dir(f"bin-{label}")
                 elif shell[0] == "posix":
                     path = str(Path(shell[1]).parent.parent / "usr" / "bin")

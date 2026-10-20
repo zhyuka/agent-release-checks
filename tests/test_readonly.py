@@ -114,6 +114,22 @@ def reviewer_denies(command, cwd=PROJECT, project=PROJECT):
     return bool(command_writes(command, reviewer_scope(project, cwd)))
 
 
+class DeviceTest(unittest.TestCase):
+    """Git Bash on Windows has /dev/null too, and os.path there turns it into \\dev\\null."""
+
+    def test_devices_are_not_files_under_windows_path_rules(self):
+        import ntpath
+        from types import SimpleNamespace
+        from invigilator import shell
+        with mock.patch.object(shell, "os", SimpleNamespace(path=ntpath)):
+            for command in ("ls > /dev/null 2>&1", "echo hi > /dev/stderr",
+                            "curl -s -o /dev/null -w '%{http_code}' https://example.com",
+                            "cat x | tee /dev/stderr | wc -l", "cat notes.md 2>/dev/null | head"):
+                with self.subTest(command=command):
+                    self.assertEqual(command_writes(command), "")
+            self.assertTrue(command_writes("echo hi > /dev/../tmp/x"))
+
+
 class ProjectScopeTest(unittest.TestCase):
     """The Stop hook counts a write that lands in the project, or where it can't tell."""
 

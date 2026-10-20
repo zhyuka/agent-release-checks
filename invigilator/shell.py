@@ -10,6 +10,7 @@ program() strips the VAR=value words and wrappers in front of a program.
 drop_heredocs() gives the command line without its heredoc bodies.
 """
 import os
+import posixpath
 import re
 from dataclasses import dataclass, field
 
@@ -60,12 +61,13 @@ def writes_file(operator, target):
 
     Only the null device, the standard streams, the terminal and file
     descriptors count as not a file; the path is normalized first, so
-    /dev/../tmp/x is a file."""
+    /dev/../tmp/x is a file. Shell paths are POSIX paths, Git Bash's too,
+    so this uses posixpath: os.path on Windows turns /dev/null into \\dev\\null."""
     if ">" not in operator or target.startswith((">(", "<(")):
         return False  # a process substitution's own commands are read on their own
     if operator in (">&", "<&") and (target.isdigit() or target == "-"):
         return False
-    return not DEVICES.fullmatch(os.path.normpath(target)) if target.startswith("/dev/") else True
+    return not DEVICES.fullmatch(posixpath.normpath(target)) if target.startswith("/dev/") else True
 
 
 def program(words):
