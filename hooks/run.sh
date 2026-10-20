@@ -3,7 +3,8 @@
 #
 # hooks.json runs this on macOS, Linux and Windows with Git Bash as
 #     sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <hook>
-# On Windows without Git Bash, hooks.json runs the same search in PowerShell.
+# On Windows without Git Bash, hooks.json runs hooks/run.ps1, the same search in
+# PowerShell.
 #
 # The hook input on stdin goes, unread, to each Python in turn. hooks/run.py
 # exits 0 when it ran the hook and 3 when that Python is older than 3.9. Any

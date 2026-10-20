@@ -2,6 +2,18 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## 0.3.5
+
+### Changed
+
+- On Windows without Git Bash, the second line of each hook command now runs `hooks/run.ps1` in Windows PowerShell, and the search for Python moved there. Before, that line held the whole search, and the Claude plugin directory's validator, which reads a hook command as shell, read its statements as programs computed at run time and blocked the plugin as a possible unpinned package launcher. Each line of each hook command now names its program, and a test fails if one doesn't.
+- The Python that `run.ps1` starts reads the hook input itself, as on macOS and Linux, and PowerShell no longer passes the input through a pipe. 0.3.0 failed open there because its PowerShell line named PowerShell's `$input`, and a script that names it reads all of stdin before it starts. `run.ps1` doesn't name it, and a test fails if it does.
+- `run.ps1` runs with `-ExecutionPolicy Bypass`. An execution policy set through Group Policy still wins over that, and then the hooks don't run.
+
+### Added
+
+- An icon for the plugin's listing in the Claude plugin directory.
+
 ## 0.3.4
 
 ### Fixed

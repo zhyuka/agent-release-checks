@@ -53,12 +53,25 @@ class PluginFilesTest(unittest.TestCase):
             sh_line, ps_line = handler["command"].split("\n")
             words = shlex.split(sh_line.replace("${CLAUDE_PLUGIN_ROOT}", ROOT.as_posix()))
             self.assertEqual(words, ["exec", "sh", (ROOT / "hooks" / "run.sh").as_posix(), names[event]])
-            self.assertIn(f'"$env:CLAUDE_PLUGIN_ROOT/hooks/run.py" {names[event]};', ps_line)
-            self.assertTrue(ps_line.rstrip().endswith("exit 0"))
+            self.assertEqual(ps_line, "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "
+                                      f'"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1" {names[event]}')
             shapes.add(handler["command"].replace(names[event], "HOOK"))
         self.assertEqual(len(shapes), 1, "the four hook commands should differ only in the hook name")
         self.assertEqual(set(names.values()) - {"session_status"}, set(plugin.SCRIPTS))
         self.assertTrue(all(path.is_file() for path in plugin.SCRIPTS.values()))
+
+    def test_each_hook_command_line_runs_one_program_it_names(self):
+        # The plugin directory's validator reads a hook command as shell. It blocks one whose
+        # program comes from a variable or an expression, since that could be any package launcher.
+        for event, groups in load("hooks/hooks.json")["hooks"].items():
+            for line in groups[0]["hooks"][0]["command"].split("\n"):
+                with self.subTest(event=event, line=line[:30]):
+                    words = list(shlex.shlex(line, posix=True, punctuation_chars=";|&"))
+                    self.assertRegex(words[0], r"^[A-Za-z][A-Za-z0-9._-]*$")
+                    self.assertEqual([w for w in words if set(w) <= set(";|&")], [], "one program per line")
+        # A PowerShell script that names $input reads all of stdin before it starts, so no Python
+        # it runs would get the hook input.
+        self.assertNotRegex((ROOT / "hooks" / "run.ps1").read_text(encoding="utf-8"), r"(?i)\$input\b")
 
     def test_unset_plugin_options_mean_the_defaults(self):
         options = load(".claude-plugin/plugin.json")["userConfig"]

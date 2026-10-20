@@ -180,8 +180,10 @@ class EveryShellTest(unittest.TestCase):
                 elif shell[0] == "posix":
                     path = str(Path(shell[1]).parent.parent / "usr" / "bin")
                 else:
-                    path = os.pathsep.join([str(Path(shell[1]).parent),
-                                            os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")])
+                    # The second line runs powershell from Windows' default PATH entry for it.
+                    system = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+                    path = os.pathsep.join([str(Path(shell[1]).parent), system,
+                                            os.path.join(system, "WindowsPowerShell", "v1.0")])
                 answers = []
                 for session in (f"{label}-a", f"{label}-a", f"{label}-b"):
                     payload["session_id"] = session

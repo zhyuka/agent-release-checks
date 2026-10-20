@@ -1,5 +1,5 @@
 {
-  "description": "Invigilator: reviewer agents stay read-only, and builders pass QA after their last edit before they stop. Each command runs hooks/run.sh in sh or Git Bash; on Windows without Git Bash, PowerShell skips the first line and runs the second.",
+  "description": "Invigilator: reviewer agents stay read-only, and builders pass QA after their last edit before they stop. Each command runs hooks/run.sh in sh or Git Bash; on Windows without Git Bash, PowerShell skips the first line and runs hooks/run.ps1 from the second.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session_status\n$OutputEncoding = New-Object System.Text.UTF8Encoding $false; $b = New-Object System.IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($b); $j = [System.Text.Encoding]::UTF8.GetString($b.ToArray()); $t = @(); if ($env:INVIGILATOR_PYTHON) { $t += ,@($env:INVIGILATOR_PYTHON) }; $t += ,@('py', '-3'); $t += ,@('python'); $t += ,@('python3'); foreach ($p in $t) { $e = $p[0]; $a = @($p | Select-Object -Skip 1); if (Get-Command $e -CommandType Application -ErrorAction SilentlyContinue) { $j | & $e @a \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.py\" session_status; if ($LASTEXITCODE -eq 0) { exit 0 } } }; $s = ''; try { $s = ($j | ConvertFrom-Json).session_id -replace '[^A-Za-z0-9_-]', '' } catch { }; $d = $env:TEMP; if (-not $d) { $d = '/tmp' }; $m = Join-Path $d \"invigilator-no-python-$s\"; if (-not (Test-Path -LiteralPath $m)) { New-Item -ItemType File -Path $m -Force | Out-Null; '{\"systemMessage\": \"invigilator is off: it needs Python 3.9 or later, and none ran (tried py -3, python and python3). Install Python, or set INVIGILATOR_PYTHON to its path.\"}' }; exit 0",
+            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session_status\npowershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\" session_status",
             "timeout": 15
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" reviewer_readonly\n$OutputEncoding = New-Object System.Text.UTF8Encoding $false; $b = New-Object System.IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($b); $j = [System.Text.Encoding]::UTF8.GetString($b.ToArray()); $t = @(); if ($env:INVIGILATOR_PYTHON) { $t += ,@($env:INVIGILATOR_PYTHON) }; $t += ,@('py', '-3'); $t += ,@('python'); $t += ,@('python3'); foreach ($p in $t) { $e = $p[0]; $a = @($p | Select-Object -Skip 1); if (Get-Command $e -CommandType Application -ErrorAction SilentlyContinue) { $j | & $e @a \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.py\" reviewer_readonly; if ($LASTEXITCODE -eq 0) { exit 0 } } }; $s = ''; try { $s = ($j | ConvertFrom-Json).session_id -replace '[^A-Za-z0-9_-]', '' } catch { }; $d = $env:TEMP; if (-not $d) { $d = '/tmp' }; $m = Join-Path $d \"invigilator-no-python-$s\"; if (-not (Test-Path -LiteralPath $m)) { New-Item -ItemType File -Path $m -Force | Out-Null; '{\"systemMessage\": \"invigilator is off: it needs Python 3.9 or later, and none ran (tried py -3, python and python3). Install Python, or set INVIGILATOR_PYTHON to its path.\"}' }; exit 0",
+            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" reviewer_readonly\npowershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\" reviewer_readonly",
             "timeout": 30,
             "onFailure": "continue"
           }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" qa_before_done\n$OutputEncoding = New-Object System.Text.UTF8Encoding $false; $b = New-Object System.IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($b); $j = [System.Text.Encoding]::UTF8.GetString($b.ToArray()); $t = @(); if ($env:INVIGILATOR_PYTHON) { $t += ,@($env:INVIGILATOR_PYTHON) }; $t += ,@('py', '-3'); $t += ,@('python'); $t += ,@('python3'); foreach ($p in $t) { $e = $p[0]; $a = @($p | Select-Object -Skip 1); if (Get-Command $e -CommandType Application -ErrorAction SilentlyContinue) { $j | & $e @a \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.py\" qa_before_done; if ($LASTEXITCODE -eq 0) { exit 0 } } }; $s = ''; try { $s = ($j | ConvertFrom-Json).session_id -replace '[^A-Za-z0-9_-]', '' } catch { }; $d = $env:TEMP; if (-not $d) { $d = '/tmp' }; $m = Join-Path $d \"invigilator-no-python-$s\"; if (-not (Test-Path -LiteralPath $m)) { New-Item -ItemType File -Path $m -Force | Out-Null; '{\"systemMessage\": \"invigilator is off: it needs Python 3.9 or later, and none ran (tried py -3, python and python3). Install Python, or set INVIGILATOR_PYTHON to its path.\"}' }; exit 0",
+            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" qa_before_done\npowershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\" qa_before_done",
             "timeout": 60
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" qa_before_done\n$OutputEncoding = New-Object System.Text.UTF8Encoding $false; $b = New-Object System.IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($b); $j = [System.Text.Encoding]::UTF8.GetString($b.ToArray()); $t = @(); if ($env:INVIGILATOR_PYTHON) { $t += ,@($env:INVIGILATOR_PYTHON) }; $t += ,@('py', '-3'); $t += ,@('python'); $t += ,@('python3'); foreach ($p in $t) { $e = $p[0]; $a = @($p | Select-Object -Skip 1); if (Get-Command $e -CommandType Application -ErrorAction SilentlyContinue) { $j | & $e @a \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.py\" qa_before_done; if ($LASTEXITCODE -eq 0) { exit 0 } } }; $s = ''; try { $s = ($j | ConvertFrom-Json).session_id -replace '[^A-Za-z0-9_-]', '' } catch { }; $d = $env:TEMP; if (-not $d) { $d = '/tmp' }; $m = Join-Path $d \"invigilator-no-python-$s\"; if (-not (Test-Path -LiteralPath $m)) { New-Item -ItemType File -Path $m -Force | Out-Null; '{\"systemMessage\": \"invigilator is off: it needs Python 3.9 or later, and none ran (tried py -3, python and python3). Install Python, or set INVIGILATOR_PYTHON to its path.\"}' }; exit 0",
+            "command": "exec sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" qa_before_done\npowershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:CLAUDE_PLUGIN_ROOT/hooks/run.ps1\" qa_before_done",
             "timeout": 60
           }
         ]
