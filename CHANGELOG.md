@@ -2,6 +2,12 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## 0.3.1
+
+### Fixed
+
+- On Windows without Git Bash, the hooks let every call through. PowerShell doesn't hand its own input to a program it starts, so Python got an empty hook input, failed to read it, and failed open. The PowerShell line now reads the input once as UTF-8 and pipes it to each Python it tries. CI caught this on the first run of 0.3.0, where the launcher tests run every hook command in pwsh on Ubuntu, macOS and Windows, and in Windows PowerShell.
+
 ## 0.3.0
 
 ### Added
