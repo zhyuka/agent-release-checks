@@ -198,6 +198,25 @@ class ProjectScopeTest(unittest.TestCase):
         self.assertFalse(stop_counts("cd /c/Users/me && touch a", cwd=project, project=project))
 
 
+@unittest.skipUnless(os.name == "nt", "Git Bash paths are read as Windows paths only on Windows")
+class GitBashOnWindowsTest(unittest.TestCase):
+    """Git Bash writes /tmp and /c/Users. Windows path rules alone would join them into \\tmp\\a and C:\\c\\Users."""
+
+    PROJECT = "C:\\Users\\me\\site"
+
+    def test_the_folder_follows_cd_through_git_bash_paths(self):
+        self.assertTrue(stop_counts("cd /tmp && cd /c/Users/me/site && touch a", self.PROJECT, self.PROJECT))
+        self.assertTrue(stop_counts("cd /tmp && cd /c/Users/me/site/src && touch a", self.PROJECT, self.PROJECT))
+        self.assertFalse(stop_counts("cd /c/Users/me && cd other && touch a", self.PROJECT, self.PROJECT))
+
+    def test_a_reviewer_may_write_to_git_bash_temp(self):
+        for command in ("mktemp", "mktemp -d", "cd /tmp && touch a", "cd /tmp && mkdir x && cd x && touch a",
+                        "cd /tmp/w && git --git-dir=.git --work-tree=. checkout ."):
+            with self.subTest(command=command):
+                self.assertFalse(reviewer_denies(command, self.PROJECT, self.PROJECT))
+        self.assertTrue(reviewer_denies("touch ~nosuchuser12345/a", self.PROJECT, self.PROJECT))
+
+
 class ReviewerScopeTest(unittest.TestCase):
     """A reviewer may write only to temp folders outside the project."""
 

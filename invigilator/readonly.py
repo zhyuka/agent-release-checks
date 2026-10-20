@@ -278,7 +278,7 @@ class _Checker:
             target = _values(args, "t", ("--target-directory",))
             dest = target[0] if target else (positional[-1] if positional else "")
             sources = positional if target else positional[:-1]
-            landed = [dest] + [os.path.join(dest, os.path.basename(s.rstrip("/"))) for s in sources if dest]
+            landed = [dest] + [_join(dest, os.path.basename(s.rstrip("/"))) for s in sources if dest]
             return landed + (sources if name in ("mv", "gmv") else [])  # mv also takes the source away
         if name in ("ln", "gln", "link"):
             target = _values(args, "t", ("--target-directory",))
@@ -470,6 +470,17 @@ def _windows(path):
     return bool(WINDOWS_PATH.match(path))
 
 
+def _join(*parts):
+    """os.path.join by the rules of the paths given. Git Bash on Windows writes /tmp and
+    /c/Users, which Windows rules would join into /tmp\\a and C:\\c\\Users."""
+    return (ntpath if any(_windows(p) for p in parts) else posixpath).join(*parts)
+
+
+def _normjoin(*parts):
+    path = _join(*parts)
+    return ntpath.normpath(path) if _windows(path) else posixpath.normpath(path)
+
+
 def _variable(name, cwd):
     if name == "HOME":
         return os.path.expanduser("~")
@@ -489,6 +500,8 @@ def resolve_path(text, cwd):
         return None
     text = KNOWN_VARIABLES.sub(lambda m: _variable(m.group(1) or m.group(2), cwd), text)
     if text.startswith("~"):
+        if os.name == "nt" and not re.match(r"~(?:[/\\]|$)", text):
+            return None  # Windows guesses ~user from this user's home; bash keeps an unknown one as it is
         text = os.path.expanduser(text)
         if text.startswith("~"):
             return None
@@ -630,7 +643,7 @@ def _landing(name, args, env=None, cwd=None, links=False):
         target = _values(args, "t", ("--target-directory",))
         dest = target[0] if target else (positional[-1] if positional else "")
         sources = positional if target else positional[:-1]
-        landed = [dest] + [os.path.join(dest, os.path.basename(s.rstrip("/"))) for s in sources if dest]
+        landed = [dest] + [_join(dest, os.path.basename(s.rstrip("/"))) for s in sources if dest]
         # mv and rsync --remove-source-files take the source away, so it changes. cp -l/-s only
         # makes a link, which does not change the source, so it counts just for the reviewer.
         takes_source = name in ("mv", "gmv") or (name == "rsync" and "--remove-source-files" in args) \
@@ -704,9 +717,9 @@ def _landing(name, args, env=None, cwd=None, links=False):
         names = _positionals(args, "p", ("--suffix",))
         template = names[0] if names else "tmp.XXXXXXXXXX"
         if dirs:
-            return [os.path.join(dirs[0], template)]
+            return [_join(dirs[0], template)]
         if not names or _short(args, "t") or "--tmpdir" in args:
-            return [os.path.join(os.environ.get("TMPDIR") or "/tmp", os.path.basename(template))]
+            return [_join(os.environ.get("TMPDIR") or "/tmp", os.path.basename(template))]
         return [template]
     if name == "git":
         return _git_landing(args, env, cwd)
@@ -751,12 +764,12 @@ def _git_landing(args, env=None, cwd=None):
             sub, rest = a, args[i + 1:]
             break
         i += 2 if a in GIT_VALUE_OPTIONS else 1
-    base = os.path.join(*chdir) if chdir else "."
-    work = os.path.join(base, worktree[-1]) if worktree else base
+    base = _join(*chdir) if chdir else "."
+    work = _join(base, worktree[-1]) if worktree else base
     if sub == "clone":
         names = [a for a in rest if not a.startswith("-")]
-        return [os.path.join(work, names[-1]) if len(names) > 1 else (names[-1] if names else work)]
-    repo = os.path.join(base, gitdir[-1]) if gitdir else os.path.join(work, ".git")
+        return [_join(work, names[-1]) if len(names) > 1 else (names[-1] if names else work)]
+    repo = _join(base, gitdir[-1]) if gitdir else _join(work, ".git")
     return [work, repo] + index
 
 
@@ -798,8 +811,8 @@ class _PathMatcher:
         return bool(self.name.search(text)) or (bool(self.stem.search(text)) and self.folder in text.casefold())
 
     def resolve(self, text, cwd):
-        text = os.path.expandvars(os.path.expanduser(text))
-        return os.path.normpath(os.path.join(cwd or os.getcwd(), text))
+        cwd = cwd or os.getcwd()  # resolve_path reads a Git Bash /c/Users path on Windows
+        return resolve_path(text, cwd) or _normjoin(cwd, os.path.expandvars(os.path.expanduser(text)))
 
     def alias(self, text, cwd):
         self.links.add(self.resolve(text, cwd).casefold())
@@ -866,8 +879,10 @@ def _cd(c, name, args, simple, before):
             c.cwd = UNKNOWN_CWD  # the folder before the last cd, which this check does not keep
         elif _windows(c.cwd) or _windows(target):
             c.cwd = resolve_path(target, c.cwd) or UNKNOWN_CWD
+        elif "$" in target:  # a variable this check can fill in only from its own environment
+            c.cwd = _normjoin(c.cwd, os.path.expandvars(os.path.expanduser(target)))
         else:
-            c.cwd = os.path.normpath(os.path.join(c.cwd, os.path.expandvars(os.path.expanduser(target))))
+            c.cwd = resolve_path(target, c.cwd) or UNKNOWN_CWD
     return ""
 
 

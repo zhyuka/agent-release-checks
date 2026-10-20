@@ -2,6 +2,14 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## 0.3.4
+
+### Fixed
+
+- On Windows, the hooks joined Git Bash paths such as `/tmp` and `/c/Users` by Windows path rules, which turn `/tmp` and `x` into `\tmp\x`, and `/c/Users` after `C:\site` into `C:\c\Users`. A reviewer's `mktemp` was denied, and so was `cd /tmp && mkdir x && cd x && touch a`. A builder's `cd /tmp && cd /c/Users/me/site && touch a` didn't count as a write in the project. And a shell command that changed `.claude/invigilator.json` through a `/c/...` path went through without asking you. These paths now join by their own rules.
+- On Windows, a write to `~name/a` for a user the hooks can't look up counted as outside the project, because Python there guesses that user's home folder. bash leaves such a word as it is, so the write lands in the working folder. It now counts as a write the hooks can't place.
+- Two tests failed on Windows for reasons of their own. One fed non-ASCII hook input through the Windows code page, and one put an unquoted backslash path in a shell command, where bash reads each backslash as an escape. These two, and the four test failures the fixes above clear, had been hidden behind the PowerShell failures, since CI shows only the first 10.
+
 ## 0.3.3
 
 ### Fixed

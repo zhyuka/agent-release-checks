@@ -151,9 +151,15 @@ class ConfigGuardTest(unittest.TestCase):
     def test_project_dir_comes_from_the_environment_first(self):
         elsewhere = Path(self.tmp.name) / "elsewhere"
         elsewhere.mkdir()
-        with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.project)}):
-            output = self.answer("Bash", {"command": f"rm {self.config}"}, cwd=elsewhere)
-        self.assertEqual(decision(output), "ask")
+        # Quoted, since bash reads a backslash outside quotes as an escape. Git Bash also takes C:/ and /c/.
+        paths = [f"'{self.config}'", self.config.as_posix()]
+        if os.name == "nt":
+            paths.append("/" + self.config.drive[0].lower() + self.config.as_posix()[2:])
+        for path in paths:
+            with self.subTest(path=path):
+                with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.project)}):
+                    output = self.answer("Bash", {"command": f"rm {path}"}, cwd=elsewhere)
+                self.assertEqual(decision(output), "ask")
 
     def test_the_reason_says_what_is_at_stake(self):
         output = self.answer("Bash", {"command": "rm .claude/invigilator.json"})

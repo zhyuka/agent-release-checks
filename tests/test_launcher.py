@@ -224,9 +224,11 @@ class RunPyTest(unittest.TestCase):
         full_env = {k: v for k, v in os.environ.items()
                     if not k.startswith(("CLAUDE_PLUGIN_", "CLAUDE_PROJECT_DIR"))}
         full_env.update(env or {})
-        done = subprocess.run([sys.executable, "-c", code], input=payload, capture_output=True,
-                              text=True, cwd=ROOT, env=full_env, timeout=60)
-        return done.returncode, json.loads(done.stdout) if done.stdout.strip() else {}, done.stderr
+        # Bytes, as Claude Code sends them: text=True would encode in the locale's code page.
+        done = subprocess.run([sys.executable, "-c", code], input=payload.encode("utf-8"), capture_output=True,
+                              cwd=ROOT, env=full_env, timeout=60)
+        stdout, stderr = done.stdout.decode("utf-8", "replace"), done.stderr.decode("utf-8", "replace")
+        return done.returncode, json.loads(stdout) if stdout.strip() else {}, stderr
 
     def test_a_python_older_than_3_9_exits_3_before_reading_the_input(self):
         code, output, _ = self.run_py("reviewer_readonly", pre="sys.version_info = (3, 8, 0); ",
