@@ -81,7 +81,7 @@ def session_status(environ=None):
     event = event if isinstance(event, dict) else {}
     project = environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "."
     config, problem = hooks.load_config(project, environ)
-    problems = [f"{problem}. Using the default config"] if problem else []
+    problems = [problem] if problem else []
     option_problem = hooks.plugin_options(environ)[1]
     if option_problem:
         problems.append(option_problem)
@@ -90,7 +90,10 @@ def session_status(environ=None):
         problems.append(f"the plugin option session_status is {mode!r}, not \"once\", "
                         "\"always\" or \"off\", so it is ignored")
         mode = "once"
-    line = status_line(config, from_file=not problem and (Path(project) / hooks.CONFIG).is_file())
+    accepted, user_file, _ = hooks.accepted_qa_commands(project, environ)
+    from_file = (Path(project) / hooks.CONFIG).is_file() and not hooks.project_file(project)[1]
+    line = status_line(config, from_file, proposed=hooks.proposed_qa_commands(project, config),
+                       user_file=user_file if accepted is not None else None)
     shown = [f"invigilator: {p}." for p in problems]
     if mode == "always" or (mode == "once" and _first_time(environ, project, line)):
         shown.append(line)
@@ -99,8 +102,10 @@ def session_status(environ=None):
     return 0
 
 
-def status_line(config, from_file=False):
-    """One line that says which agents the hooks hold to which rule."""
+def status_line(config, from_file=False, proposed=(), user_file=None):
+    """One line that says which agents the hooks hold to which rule. proposed are QA commands
+    the project file names that don't count yet; user_file is the user's own config when it
+    set this project's QA commands."""
     parts = ["invigilator is on."]
     if config["reviewer_agents"]:
         rule = ("can't write files or run shell commands" if config["reviewer_shell"] == "block-all"
@@ -108,7 +113,11 @@ def status_line(config, from_file=False):
         parts.append(f"Reviewers ({_agents(config['reviewer_agents'])}) {rule}.")
     else:
         parts.append("No agent counts as a reviewer.")
-    if not config["qa_commands"]:
+    offer = " or ".join(f'"{qa}"' for qa in proposed)
+    if not config["qa_commands"] and proposed:
+        parts.append(f"The QA check is off: this project's {hooks.CONFIG.as_posix()} proposes {offer}, "
+                     f"which doesn't count until you accept it with {SETUP_SKILL}.")
+    elif not config["qa_commands"]:
         parts.append(f"The QA check is off until you set a QA command: run {SETUP_SKILL}.")
     elif not config["builder_agents"]:
         parts.append("The QA check is off because no agent counts as a builder.")
@@ -116,8 +125,16 @@ def status_line(config, from_file=False):
         commands = " or ".join(f'"{qa}"' for qa in config["qa_commands"])
         parts.append(f"Builders ({_agents(config['builder_agents'])}) must pass {commands} "
                      "after their last edit before they stop.")
-    if from_file:
-        parts.append(f"Settings: {hooks.CONFIG.as_posix()}.")
+        if proposed:
+            parts.append(f"The project's file also proposes {offer}, which doesn't count until you "
+                         f"accept it with {SETUP_SKILL}.")
+    files = [hooks.CONFIG.as_posix()] if from_file else []
+    if user_file:
+        home = Path(os.path.expanduser("~"))
+        files.append(f"~/{Path(user_file).relative_to(home).as_posix()}" if home in Path(user_file).parents
+                     else str(user_file))
+    if files:
+        parts.append(f"Settings: {' and '.join(files)}.")
     return " ".join(parts)
 
 

@@ -38,22 +38,22 @@ The hooks need Claude Code 2.1.69 or later, the first version that tells hooks w
 
 1. Hooks load when a session starts. After the install, start a new session or run `/reload-plugins`.
 2. The session opens with one line from the plugin: `invigilator is on. Reviewers (*reviewer*) can't write files. The QA check is off until you set a QA command: run /invigilator:setup.` It shows once per project, and again when the settings change.
-3. From then on, an agent whose name matches `*reviewer*` can't write files. The QA check stays off until the project names a QA command, so nothing else changes until you run the setup skill.
+3. From then on, an agent whose name matches `*reviewer*` can't write files. The QA check stays off until you accept a QA command for the project, so nothing else changes until you run the setup skill.
 
 An install in a session can show the plugin's options with their defaults filled in. Keep them or change them; [Configure it](#configure-it) says what each one does.
 
 ## Examples
 
 1. Keep a reviewer read-only. Ask: "Use the code-reviewer agent to review build/app.js and list what to fix." If the reviewer tries `sed -i` on the file, Claude Code cancels the call and tells it to put the change in its review instead.
-2. Make "done" mean QA passed. With `"builder_agents": ["main"]` and `"qa_commands": ["npm run check"]` in `.claude/invigilator.json`, ask: "Fix the failing test in src/cart.js and tell me when it's done." If Claude edits, runs `npm run check | tail -5` and tries to stop, the hook sends it back to run `npm run check` on its own. It can stop once that passes after its last edit.
+2. Make "done" mean QA passed. Run `/invigilator:setup` and pick the main session as the builder and `npm run check` as the QA command. Then ask: "Fix the failing test in src/cart.js and tell me when it's done." If Claude edits, runs `npm run check | tail -5` and tries to stop, the hook sends it back to run `npm run check` on its own. It can stop once that passes after its last edit.
 3. Check a finished build. In a clone of this repo, run `/invigilator:check examples/runs/cheap-builder`. It prints pass, fail or skip for each check. Here "step ran" fails because `npm run check` never ran, and the command exits 1.
 
 ## Configure it
 
-Every setting is optional. There are three places to set them.
+Every setting is optional. The setup skill writes them, and they live in three places.
 
-- **The setup skill.** `/invigilator:setup` finds the project's check command in `package.json`, a `Makefile`, pytest, tox, Cargo or Go, asks which agents are builders and reviewers, and writes `.claude/invigilator.json` once you confirm.
-- **The project file.** `.claude/invigilator.json` holds the settings for one project, and you can commit it for your team:
+- **The setup skill.** `/invigilator:setup` finds the project's check command in `package.json`, a `Makefile`, pytest, tox, Cargo or Go, asks which agents are builders and reviewers, and once you confirm writes `.claude/invigilator.json` and your entry in your own `invigilator.json`.
+- **The project file.** `.claude/invigilator.json` holds the settings for one project, and you can commit it for your team. It can add reviewers and builders and make `reviewer_shell` stricter, but it can't take any of your settings away, and its `qa_commands` only propose a QA command:
 
   ```json
   {
@@ -64,44 +64,56 @@ Every setting is optional. There are three places to set them.
   }
   ```
 
+- **Your own file.** `invigilator.json` in your Claude Code config folder, `~/.claude` or `CLAUDE_CONFIG_DIR`, lists the QA commands you accepted for each project. Only these count:
+
+  ```json
+  {
+    "projects": {
+      "~/code/shop*": {"qa_commands": ["npm run check"]}
+    }
+  }
+  ```
+
+  A key covers the folders under it. A `*` matches any characters, slashes included, so `~/code/shop*` also covers a worktree such as `~/code/shop-fix`. When several keys match, the longest wins.
+
 - **Plugin options.** These are yours, for every project. Set them with `/plugin configure invigilator@zhyuka` or in `/config` in a session, or from a shell with `--config builder_agents=main` on `claude plugin install`. Claude Code 2.1.285 or later also has `claude plugin configure invigilator@zhyuka --values-stdin`. Lists are names separated by commas.
 
 | Setting | Default | What it does | Where |
 | --- | --- | --- | --- |
-| `reviewer_agents` | `*reviewer*` | Agents that may not write files | File or option |
-| `reviewer_shell` | `block-writes` | `block-writes` denies shell commands that write files. `block-all` denies every shell command | File or option |
-| `builder_agents` | `*builder*` | Agents that have to pass QA after their last edit before they stop | File or option |
-| `qa_commands` | none | Commands that count as the QA step. The QA check stays off until you list one | File only, since a QA command belongs to a project |
+| `reviewer_agents` | `*reviewer*` | Agents that may not write files | Option; the project file can add names |
+| `reviewer_shell` | `block-writes` | `block-writes` denies shell commands that write files. `block-all` denies every shell command | Option; the project file can make it `block-all` |
+| `builder_agents` | `*builder*` | Agents that have to pass QA after their last edit before they stop | Option; the project file can add names |
+| `qa_commands` | none | Commands that count as the QA step. The QA check stays off until you accept one | Your own file; the project file can propose one |
 | `session_status` | `once` | The line at session start. `once` shows it the first time in a project and when it changes, `always` in every session, `off` never | Option only |
 
-A field in the project file wins over the option, and an option wins over the default.
+A repo you clone can't turn a check off. Its file only adds to your settings, and a QA command it proposes counts once you accept it. The line at session start names a proposed command that doesn't count yet.
 
 The hooks tell agents apart by the `agent_type` field that Claude Code puts in each hook input. For a custom subagent that is the `name` in its frontmatter. For a plugin's subagent it is `plugin-name:agent-name`, and for a session started with `--agent` it is that agent's name. Patterns are shell-style globs, matched without case. `main` stands for the main session when it runs without `--agent`.
 
-A project file with bad JSON, an unknown field or a wrong type makes the hooks fall back to the defaults, and every hook answer then carries a warning that names the problem. A bad option value is ignored and named in the line at session start.
+A project file with bad JSON, an unknown field or a wrong type makes the hooks fall back to the defaults, and every hook answer then carries a warning that names the problem. A mistake in your own file means no QA command counts until you fix it, with the same warning. A bad option value is ignored and named in the line at session start.
 
 ## Turn it off
 
 - In one project, for you: `claude plugin disable invigilator@zhyuka --scope local`. For everyone on the project: `--scope project`.
 - Everywhere: `/plugin disable invigilator@zhyuka` in a session, or `claude plugin disable invigilator@zhyuka`. `claude plugin uninstall invigilator@zhyuka` removes it.
-- One check only: leave `qa_commands` out of the project file to turn off the QA check, or set `"reviewer_agents": []` to turn off the reviewer check.
+- One check only: remove the project's entry from your own `invigilator.json`, or set its `qa_commands` to `[]`, to turn off the QA check. Set the `reviewer_agents` option to an empty value to turn off the reviewer check.
 - The line at session start: set the `session_status` option to `off`. Problems still show.
 
 ## Troubleshooting
 
-**"invigilator is off: it needs Python 3.9 or later, and none ran."** The hooks found no Python that could run them, so they let every call through and say so once per session. They try `python3` and then `python`, and on Windows `py -3`, `python` and `python3`. Install Python 3.9 or later, or set `INVIGILATOR_PYTHON` to its full path in the `env` block of your Claude Code settings. On Windows, a `python` or `python3` that opens the Microsoft Store is an app execution alias, not Python, and the hooks move past it. On macOS without the command line tools, `/usr/bin/python3` only offers to install them, and the hooks skip it.
+**"invigilator is off: it needs Python 3.9 or later, and none ran."** The hooks found no Python that could run them, so they let every call through and say so once per session. They try `python3` and then `python`, and on Windows `py -3`, `python` and `python3`. Install Python 3.9 or later, or set `INVIGILATOR_PYTHON` to its full path in the `env` block of your Claude Code settings. A path inside the project is skipped, so a repo can't choose the program that runs its own checks. On Windows, a `python` or `python3` that opens the Microsoft Store is an app execution alias, not Python, and the hooks move past it. On macOS without the command line tools, `/usr/bin/python3` only offers to install them, and the hooks skip it.
 
 **Nothing happens, and `/hooks` says "Only hooks from managed settings run here".** Your organization set `allowManagedHooksOnly` in its managed settings. Claude Code then runs no plugin hooks, these included, unless the managed settings force-enable the plugin. To run these hooks, an admin has to register the `zhyuka` marketplace under `extraKnownMarketplaces` and set `"invigilator@zhyuka": true` under `enabledPlugins`, both in the managed settings. The skills and the `invigilator check` command work either way.
 
 **Windows without Git Bash.** Claude Code runs hook commands in PowerShell there. Each command in `hooks/hooks.json` has two lines. sh runs the first and never reads the second. PowerShell skips the first, since `exec` isn't a PowerShell command, and runs the second, which starts `hooks/run.ps1` in Windows PowerShell to find Python the same way. It passes `-ExecutionPolicy Bypass` for that one script, but an execution policy your organization sets through Group Policy still wins, and then the hooks don't run. Since Claude Code 2.1.299, a PreToolUse hook that fails there blocks the call, so the hooks exit 0 in every case and set `"onFailure": "continue"`.
 
-**A warning on every call that names `.claude/invigilator.json`.** The file has a mistake, and the hooks use the defaults until you fix it. Run `/invigilator:setup` to rewrite it.
+**A warning on every call that names `.claude/invigilator.json` or your own `invigilator.json`.** The file has a mistake. For the project file the hooks use the defaults until you fix it; for your own, no QA command counts. Run `/invigilator:setup` to rewrite it.
 
 **See what a hook did.** Start Claude Code with `claude --debug` and read `~/.claude/debug/<session-id>.txt`, which has each hook's output and errors.
 
 ## What it reads, runs and sends
 
-- The reviewer hook reads the tool call Claude Code is about to make and the project's `.claude/invigilator.json`. It runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls.
+- The reviewer hook reads the tool call Claude Code is about to make, the project's `.claude/invigilator.json` and your own `invigilator.json`. It runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls.
 - The QA hook reads the session transcript file that Claude Code passes to Stop and SubagentStop hooks, to find which tool calls ran and whether the QA command passed. It reads only the tool calls and, for each result, whether it failed and the start of its text. It doesn't run the QA command itself.
 - The line at session start reads the same settings. To show only once per project, it writes an empty marker file under the plugin's data folder in `~/.claude/plugins/data/`. The QA hook writes one there when it blocks a stop after QA failed, so it blocks that stop only once, and one when it tells you about a change to a file QA runs. With no data folder from Claude Code, it writes the file in the temp folder. If it can't write the file, it blocks every such stop. Each time it writes one, it deletes its own marker files in that folder that are older than 30 days. When no Python is found, the hooks write an empty marker file in the temp folder so the warning shows once per session.
 - Each hook runs `sh`, or on Windows without Git Bash runs `hooks/run.ps1` in Windows PowerShell, to find Python, and then runs this plugin's scripts with it. To find Python, `hooks/run.sh` also calls `dirname`, `uname`, `sed`, `head` and `printf`, and `xcode-select -p` on macOS. The Python scripts start no other program. Nothing else runs, and nothing leaves the machine.
@@ -165,8 +177,8 @@ Claude Code keeps the agent working and hands it the reason as its next instruct
 - After QA fails, the hook blocks one stop per write, so a builder that keeps editing and failing QA goes back after each edit. Claude Code's own cap of eight stop-hook blocks in a row doesn't end that, since the count starts over each time the agent calls a tool. Press Esc to stop it, or take the command out of `qa_commands`.
 - The hook finds the files a QA command runs only in the command's own words. `npm run check` and `make check` name none, and a file that `qa.py` imports isn't one. It sees a change to them through an Edit or Write call, or a shell command or inline Python that names the file. It doesn't see a change through a glob, a path built at run time or a PowerShell command, and on a transcript over 64 MB it looks back at most 64 MB for the QA failure before the change.
 - The plugin fails open. When no Python runs it or a hook crashes, the call goes through and you see a warning. Failing closed would block every agent's writes whenever Python is missing, so the plugin doesn't set `"onFailure": "block"`.
-- Plugin options are per user. Claude Code doesn't read them from a project's settings, which is why a QA command can only go in the project file.
-- A project's `.claude/invigilator.json` wins over your options, so a repo that ships one decides there who counts as a reviewer or a builder and which QA command counts. Claude Code gives a project's own settings the same trust, and they can turn any plugin off. Read that file in a repo you don't trust.
+- Plugin options are per user and apply to every project, so the QA commands you accept live in your own `invigilator.json`, keyed by project folder. A clone in a folder no key covers needs the setup skill once.
+- A project's `.claude/invigilator.json` can only add reviewers and builders, which makes the checks stricter. A project's own Claude Code settings can do more: they can turn any plugin off. Read them in a repo you don't trust.
 - The build scorer reads static HTML, CSS and JS only. Any other build comes out UNSCORABLE.
 
 ## Use the checks without Claude Code

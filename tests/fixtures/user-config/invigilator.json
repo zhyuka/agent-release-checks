@@ -1,0 +1,5 @@
+{
+  "projects": {
+    "*/tests/fixtures/project": {"qa_commands": ["npm run check"]}
+  }
+}

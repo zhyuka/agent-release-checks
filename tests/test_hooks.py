@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import accepted
 from invigilator.runlog import read_transcript
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,8 +27,9 @@ def run_hook(script, payload, project=None):
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
     if project:
         env["CLAUDE_PROJECT_DIR"] = str(project)
-    with tempfile.TemporaryDirectory() as data:
+    with tempfile.TemporaryDirectory() as data, tempfile.TemporaryDirectory() as user:
         env["CLAUDE_PLUGIN_DATA"] = data
+        env["CLAUDE_CONFIG_DIR"] = accepted.accept(accepted.project_of(payload, project, ROOT), user)
         done = subprocess.run([sys.executable, str(script)], input=payload, capture_output=True,
                               text=True, cwd=ROOT, env=env, timeout=60)
     return done.returncode, json.loads(done.stdout) if done.stdout.strip() else {}, done.stderr
@@ -122,8 +124,11 @@ class HookConfigTest(unittest.TestCase):
         self.assertEqual(run_hook(QA, fixture("block-main-no-qa"), self.project)[1], {})
 
     def test_project_dir_wins_over_cwd(self):
+        event = json.loads(fixture("deny-reviewer-write"))
+        event["agent_type"] = "auditor"  # a reviewer in this project's file, not in the fixture project's
         self.configure(json.dumps({"reviewer_agents": ["auditor"]}))
-        self.assertEqual(run_hook(READONLY, fixture("deny-reviewer-write"), self.project)[1], {})
+        self.assertEqual(outcome(run_hook(READONLY, json.dumps(event), self.project)[1]), "deny")
+        self.assertEqual(run_hook(READONLY, json.dumps(event))[1], {})
 
     def test_a_catch_all_builder_pattern_still_skips_claude_codes_own_agents(self):
         self.configure(json.dumps({"builder_agents": ["*"], "qa_commands": ["npm run check"]}))

@@ -20,8 +20,16 @@ try_python() {
     "$@" "$here/run.py" "$hook" && exit 0
 }
 
-if [ -n "$INVIGILATOR_PYTHON" ]; then
-    try_python "$INVIGILATOR_PYTHON"
+# INVIGILATOR_PYTHON counts only outside the project, so a repository can't choose the
+# program that runs its own checks.
+inside=
+if [ -n "$INVIGILATOR_PYTHON" ] && found=$(command -v "$INVIGILATOR_PYTHON" 2>/dev/null); then
+    where=$(cd "$(dirname "$found")" 2>/dev/null && pwd -P)
+    project=$(cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null && pwd -P)
+    case "$where/" in
+        "$project"/*) inside=1 ;;
+        *) try_python "$INVIGILATOR_PYTHON" ;;
+    esac
 fi
 
 case $(uname -s 2>/dev/null) in
@@ -49,6 +57,10 @@ session=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]*\)".
 marker="${TMPDIR:-/tmp}/invigilator-no-python-${session:-unknown}"
 if [ ! -e "$marker" ]; then
     : >"$marker" 2>/dev/null
-    printf '%s\n' '{"systemMessage": "invigilator is off: it needs Python 3.9 or later, and none ran (tried python3, python and py -3). Install Python, or set INVIGILATOR_PYTHON to its path."}'
+    if [ -n "$inside" ]; then
+        printf '%s\n' '{"systemMessage": "invigilator is off: it needs Python 3.9 or later, and none ran (tried python3, python and py -3). INVIGILATOR_PYTHON is inside the project, so it was skipped. Install Python, or set INVIGILATOR_PYTHON to one outside the project."}'
+    else
+        printf '%s\n' '{"systemMessage": "invigilator is off: it needs Python 3.9 or later, and none ran (tried python3, python and py -3). Install Python, or set INVIGILATOR_PYTHON to its path."}'
+    fi
 fi
 exit 0

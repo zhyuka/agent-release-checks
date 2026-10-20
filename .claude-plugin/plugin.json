@@ -1,7 +1,7 @@
 {
   "name": "invigilator",
   "displayName": "Invigilator",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Hooks that keep reviewer agents read-only, and keep a builder from stopping until it runs its QA command after its last edit. If QA fails, it is sent back once, then you're told.",
   "author": {
     "name": "Derek Zhou",
@@ -18,7 +18,7 @@
     "reviewer_agents": {
       "type": "string",
       "title": "Reviewer agents",
-      "description": "Agents that may not write files, as name patterns separated by commas, such as *reviewer*, code-reviewer. A project's .claude/invigilator.json overrides this.",
+      "description": "Agents that may not write files, as name patterns separated by commas, such as *reviewer*, code-reviewer. A project's .claude/invigilator.json can add names but not remove these.",
       "default": "*reviewer*"
     },
     "reviewer_shell": {
@@ -30,7 +30,7 @@
     "builder_agents": {
       "type": "string",
       "title": "Builder agents",
-      "description": "Agents that must pass the project's QA command after their last edit before they stop, as name patterns separated by commas. Write main for the main session. Each project sets its QA command in .claude/invigilator.json: run /invigilator:setup.",
+      "description": "Agents that must pass the project's QA command after their last edit before they stop, as name patterns separated by commas. Write main for the main session. You accept each project's QA command with /invigilator:setup, which keeps it in your own ~/.claude/invigilator.json.",
       "default": "*builder*"
     },
     "session_status": {

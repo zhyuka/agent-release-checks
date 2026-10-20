@@ -16,7 +16,19 @@ param([string]$Hook)
 
 $run = Join-Path $PSScriptRoot 'run.py'
 $candidates = @()
-if ($env:INVIGILATOR_PYTHON) { $candidates += ,@($env:INVIGILATOR_PYTHON) }
+# INVIGILATOR_PYTHON counts only outside the project, so a repository can't choose the
+# program that runs its own checks.
+$inside = $false
+if ($env:INVIGILATOR_PYTHON) {
+    $found = Get-Command $env:INVIGILATOR_PYTHON -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) {
+        $project = $env:CLAUDE_PROJECT_DIR
+        if (-not $project) { $project = (Get-Location).ProviderPath }
+        $root = [System.IO.Path]::GetFullPath($project).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        $inside = [System.IO.Path]::GetFullPath($found.Source).StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $inside) { $candidates += ,@($env:INVIGILATOR_PYTHON) }
+    }
+}
 $candidates += ,@('py', '-3')
 $candidates += ,@('python')
 $candidates += ,@('python3')
@@ -43,6 +55,10 @@ if (-not $folder) { $folder = '/tmp' }
 $marker = Join-Path $folder "invigilator-no-python-$session"
 if (-not (Test-Path -LiteralPath $marker)) {
     New-Item -ItemType File -Path $marker -Force | Out-Null
-    '{"systemMessage": "invigilator is off: it needs Python 3.9 or later, and none ran (tried py -3, python and python3). Install Python, or set INVIGILATOR_PYTHON to its path."}'
+    if ($inside) {
+        '{"systemMessage": "invigilator is off: it needs Python 3.9 or later, and none ran (tried py -3, python and python3). INVIGILATOR_PYTHON is inside the project, so it was skipped. Install Python, or set INVIGILATOR_PYTHON to one outside the project."}'
+    } else {
+        '{"systemMessage": "invigilator is off: it needs Python 3.9 or later, and none ran (tried py -3, python and python3). Install Python, or set INVIGILATOR_PYTHON to its path."}'
+    }
 }
 exit 0

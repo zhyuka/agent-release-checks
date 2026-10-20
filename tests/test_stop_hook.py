@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import accepted
 from invigilator import hooks, readonly, runlog, step_ran
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,8 +32,9 @@ def run_hook(payload, project=FIXTURES / "project", timeout=60, data=None, env=N
     full_env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_DATA")}
     if project:
         full_env["CLAUDE_PROJECT_DIR"] = str(project)
-    full_env.update(env or {})
-    with tempfile.TemporaryDirectory() as fresh:
+    with tempfile.TemporaryDirectory() as fresh, tempfile.TemporaryDirectory() as user:
+        full_env["CLAUDE_CONFIG_DIR"] = accepted.accept(accepted.project_of(payload, project, ROOT), user)
+        full_env.update(env or {})
         if data is None:
             full_env.setdefault("CLAUDE_PLUGIN_DATA", fresh)
         elif data:

@@ -101,7 +101,10 @@ class ConfigGuardTest(unittest.TestCase):
         (self.project / "src").mkdir()
         self.config = self.project / ".claude" / "invigilator.json"
         self.config.write_text("{}\n")
+        self.user = Path(self.tmp.name) / "home" / ".claude"
+        self.user.mkdir(parents=True)
         env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        env["CLAUDE_CONFIG_DIR"] = str(self.user)
         patcher = mock.patch.dict(os.environ, env, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -165,9 +168,32 @@ class ConfigGuardTest(unittest.TestCase):
         output = self.answer("Bash", {"command": "rm .claude/invigilator.json"})
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn(".claude/invigilator.json", reason)
-        self.assertIn("turn the release checks off", reason)
+        self.assertIn("changes the release checks", reason)
         self.assertIn("needs your OK", reason)
         self.assertIn("runs rm", reason)
+
+    def test_writes_to_the_users_own_config_ask_too(self):
+        # It decides which QA commands count, so changing it can turn the QA check off.
+        mine = self.user / "invigilator.json"
+        for tool, tool_input in (("Write", {"file_path": str(mine)}),
+                                 ("Edit", {"file_path": str(mine)}),
+                                 ("Bash", {"command": f"echo '{{}}' > '{mine}'"}),
+                                 ("Bash", {"command": f"rm '{mine}'"}),
+                                 ("Bash", {"command": f"cd '{self.user}' && sed -i '' 's/a/b/' invigilator.json"})):
+            with self.subTest(tool=tool, tool_input=tool_input):
+                output = self.answer(tool, tool_input)
+                self.assertEqual(decision(output), "ask")
+                self.assertIn("your own invigilator config", output["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertIsNone(self.answer("Read", {"file_path": str(mine)}))
+        self.assertIsNone(self.answer("Write", {"file_path": str(self.user / "settings.json")}))
+
+    @unittest.skipIf(os.name == "nt", "the home folder there comes from USERPROFILE, not HOME")
+    def test_without_claude_config_dir_the_users_config_is_in_home(self):
+        home = self.user.parent
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            del os.environ["CLAUDE_CONFIG_DIR"]
+            output = self.answer("Bash", {"command": "echo '{}' > ~/.claude/invigilator.json"})
+        self.assertEqual(decision(output), "ask")
 
     def test_a_reviewer_is_still_denied(self):
         output = self.answer("Bash", {"command": "rm .claude/invigilator.json"}, agent="code-reviewer")

@@ -19,6 +19,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from invigilator import hooks, plugin
 
@@ -95,7 +96,9 @@ class PluginCopy:
         full_env = {k: v for k, v in os.environ.items()
                     if not k.startswith(("CLAUDE_PLUGIN_", "CLAUDE_PROJECT_DIR", "INVIGILATOR_"))}
         full_env.update({"CLAUDE_PLUGIN_ROOT": root, "TMPDIR": str(self.tmp / "temp"),
-                         "TEMP": str(self.tmp / "temp"), "TMP": str(self.tmp / "temp")})
+                         "TEMP": str(self.tmp / "temp"), "TMP": str(self.tmp / "temp"),
+                         # The user's own config, which accepts the fixture project's QA command.
+                         "CLAUDE_CONFIG_DIR": str(self.root / "tests" / "fixtures" / "user-config")})
         if python:
             full_env["INVIGILATOR_PYTHON"] = python
         # A fresh plugin data folder each time, so a stop the QA hook blocks once blocks in every shell.
@@ -159,6 +162,24 @@ class EveryShellTest(unittest.TestCase):
             with self.subTest(shell=label):
                 code, output, stderr = self.plugin.run(shell, "PreToolUse", payload, python=None)
                 self.assertEqual((code, outcome(output)), (0, "deny"), stderr)
+
+    def test_invigilator_python_inside_the_project_is_skipped(self):
+        # A fake Python that answers nothing, which lets every call through. Inside the project
+        # it is skipped and the real one on the PATH denies the write; outside, it runs.
+        payload = (FIXTURES / "deny-reviewer-write.json").read_text(encoding="utf-8")
+        for place, expected in (("project", "deny"), ("elsewhere", "allow")):
+            folder = self.plugin.tmp / place / "bin"
+            folder.mkdir(parents=True)
+            (folder / "python").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            (folder / "python").chmod(0o755)
+            (folder / "python.cmd").write_text("@exit /b 0\r\n", encoding="utf-8")
+            for label, shell in SHELLS.items():
+                fake = folder / ("python.cmd" if os.name == "nt" and shell[0] == "powershell" else "python")
+                with self.subTest(shell=label, place=place):
+                    code, output, stderr = self.plugin.run(
+                        shell, "PreToolUse", payload, python=str(fake),
+                        env={"CLAUDE_PROJECT_DIR": str(self.plugin.tmp / "project")})
+                    self.assertEqual((code, outcome(output)), (0, expected), stderr)
 
     def test_session_status_says_what_the_hooks_block(self):
         payload = json.dumps({"session_id": "s1", "hook_event_name": "SessionStart",
@@ -303,34 +324,98 @@ class PluginOptionsTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.project = Path(tmp.name)
+        self.tmp = Path(tmp.name)
+        self.project, self.user = self.tmp / "shop", self.tmp / "user config"
+        self.project.mkdir()
+        self.user.mkdir()
+
+    def env(self, **options):
+        return {"CLAUDE_CONFIG_DIR": str(self.user), **options}
 
     def configure(self, **fields):
         (self.project / ".claude").mkdir(exist_ok=True)
         (self.project / ".claude" / "invigilator.json").write_text(json.dumps(fields))
 
+    def accept(self, projects):
+        (self.user / "invigilator.json").write_text(json.dumps({"projects": projects}))
+
+    def qa(self, project=None, env=None):
+        return hooks.load_config(project or self.project, env or self.env())[0]["qa_commands"]
+
     def test_without_options_or_a_file_the_defaults_apply(self):
-        self.assertEqual(hooks.load_config(self.project, {}), (hooks.DEFAULTS, ""))
+        self.assertEqual(hooks.load_config(self.project, self.env()), (hooks.DEFAULTS, ""))
 
     def test_options_set_who_is_a_reviewer_and_a_builder(self):
-        env = {"CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS": " auditor, *-review ,",
-               "CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS": "main",
-               "CLAUDE_PLUGIN_OPTION_REVIEWER_SHELL": "block-all"}
+        env = self.env(CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS=" auditor, *-review ,",
+                       CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS="main",
+                       CLAUDE_PLUGIN_OPTION_REVIEWER_SHELL="block-all")
         config, problem = hooks.load_config(self.project, env)
         self.assertEqual((config["reviewer_agents"], config["builder_agents"], config["reviewer_shell"],
                           problem), (["auditor", "*-review"], ["main"], "block-all", ""))
 
-    def test_a_field_in_the_project_file_wins_over_the_option(self):
-        self.configure(reviewer_agents=["code-reviewer"], qa_commands=["make check"])
-        config, _ = hooks.load_config(self.project, {"CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS": "auditor",
-                                                      "CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS": "main"})
-        self.assertEqual((config["reviewer_agents"], config["builder_agents"], config["qa_commands"]),
-                         (["code-reviewer"], ["main"], ["make check"]))
+    def test_the_project_file_adds_agents_and_cannot_take_any_away(self):
+        self.configure(reviewer_agents=["code-reviewer"], builder_agents=[], reviewer_shell="block-writes")
+        config, _ = hooks.load_config(self.project, self.env(CLAUDE_PLUGIN_OPTION_REVIEWER_AGENTS="auditor",
+                                                             CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS="main",
+                                                             CLAUDE_PLUGIN_OPTION_REVIEWER_SHELL="block-all"))
+        self.assertEqual((config["reviewer_agents"], config["builder_agents"], config["reviewer_shell"]),
+                         (["auditor", "code-reviewer"], ["main"], "block-all"))
+        self.configure(reviewer_agents=[], reviewer_shell="block-all")
+        config, _ = hooks.load_config(self.project, self.env())
+        self.assertEqual((config["reviewer_agents"], config["reviewer_shell"]), (["*reviewer*"], "block-all"))
+
+    def test_the_project_file_only_proposes_qa_commands(self):
+        self.configure(qa_commands=["make check"])
+        config = hooks.load_config(self.project, self.env())[0]
+        self.assertEqual((config["qa_commands"], hooks.proposed_qa_commands(self.project, config)),
+                         ([], ["make check"]))
+        self.accept({str(self.project): {"qa_commands": ["make check"]}})
+        config = hooks.load_config(self.project, self.env())[0]
+        self.assertEqual((config["qa_commands"], hooks.proposed_qa_commands(self.project, config)),
+                         (["make check"], []))
+        self.configure(qa_commands=["true"])  # a later change to the file doesn't count either
+        self.assertEqual(self.qa(), ["make check"])
+        (self.project / ".claude" / "invigilator.json").unlink()  # nor does deleting it
+        self.assertEqual(self.qa(), ["make check"])
+
+    def test_an_entry_covers_its_subfolders_and_the_longest_match_wins(self):
+        (self.tmp / "shop-fix" / "web").mkdir(parents=True)
+        (self.project / "web").mkdir()
+        (self.tmp / "other").mkdir()
+        self.accept({str(self.tmp): {"qa_commands": ["make"]},
+                     str(self.tmp / "shop") + "*": {"qa_commands": ["npm run check"]},
+                     str(self.tmp / "nothing"): {"qa_commands": ["true"]}})
+        self.assertEqual([self.qa(self.tmp / p) for p in ("shop", "shop/web", "shop-fix/web", "other")],
+                         [["npm run check"], ["npm run check"], ["npm run check"], ["make"]])
+        self.assertEqual(self.qa(Path(tempfile.gettempdir())), [])
+
+    @unittest.skipIf(os.name == "nt", "the home folder there comes from USERPROFILE, not HOME")
+    def test_a_key_can_start_with_a_tilde(self):
+        self.accept({"~/shop": {"qa_commands": ["npm test"]}})
+        with mock.patch.dict(os.environ, {"HOME": str(self.tmp)}):
+            self.assertEqual(self.qa(), ["npm test"])
+
+    def test_claude_config_dir_inside_the_project_is_ignored(self):
+        inside = self.project / ".config"
+        inside.mkdir()
+        (inside / "invigilator.json").write_text(json.dumps({"projects": {str(self.project): {"qa_commands": ["true"]}}}))
+        config, problem = hooks.load_config(self.project, {"CLAUDE_CONFIG_DIR": str(inside)})
+        self.assertEqual(config["qa_commands"], [])
+        self.assertIn("is inside the project", problem)
+
+    def test_a_broken_user_file_is_reported_and_no_qa_command_counts(self):
+        for text in ("{", '{"projects": []}', '{"projects": {}, "qa_commands": ["make"]}',
+                     '{"projects": {"/x": {"qa_commands": "make"}}}', '{"projects": {"/x": {"qa": ["make"]}}}'):
+            with self.subTest(text=text):
+                (self.user / "invigilator.json").write_text(text)
+                config, problem = hooks.load_config(self.project, self.env())
+                self.assertEqual(config["qa_commands"], [])
+                self.assertIn("so no QA command counts", problem)
 
     def test_a_broken_file_still_reports_its_problem_and_the_options_apply(self):
         (self.project / ".claude").mkdir()
         (self.project / ".claude" / "invigilator.json").write_text("{")
-        config, problem = hooks.load_config(self.project, {"CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS": "main"})
+        config, problem = hooks.load_config(self.project, self.env(CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS="main"))
         self.assertIn("could not be read", problem)
         self.assertEqual(config["builder_agents"], ["main"])
 
@@ -361,10 +446,16 @@ class SessionStatusTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.project, self.data = Path(tmp.name, "project"), Path(tmp.name, "data")
+        self.user = Path(tmp.name, "user")
         self.project.mkdir()
+        self.user.mkdir()
+
+    def accept(self, *qa):
+        (self.user / "invigilator.json").write_text(
+            json.dumps({"projects": {str(self.project): {"qa_commands": list(qa)}}}))
 
     def status(self, mode=None, data=True, **env):
-        env = {"CLAUDE_PROJECT_DIR": str(self.project), **env}
+        env = {"CLAUDE_PROJECT_DIR": str(self.project), "CLAUDE_CONFIG_DIR": str(self.user), **env}
         if mode:
             env["CLAUDE_PLUGIN_OPTION_SESSION_STATUS"] = mode
         if data:
@@ -387,9 +478,14 @@ class SessionStatusTest(unittest.TestCase):
                                 "check is off until you set a QA command: run /invigilator:setup.")
         self.assertEqual(self.status(), "")
         self.configure('{"builder_agents": ["main"], "qa_commands": ["npm test"]}')
-        self.assertIn('Builders (the main session) must pass "npm test" after their last edit',
+        self.assertIn('The QA check is off: this project\'s .claude/invigilator.json proposes "npm test", '
+                      "which doesn't count until you accept it with /invigilator:setup.", self.status())
+        self.accept("npm test")
+        self.assertIn('Builders (*builder*, the main session) must pass "npm test" after their last edit',
                       self.status())
         self.assertEqual(self.status(), "")
+        self.configure('{"qa_commands": ["npm test", "make"]}')
+        self.assertIn('The project\'s file also proposes "make", which doesn\'t count', self.status())
 
     def test_always_and_off(self):
         self.assertIn("invigilator is on", self.status("always"))
@@ -409,12 +505,13 @@ class SessionStatusTest(unittest.TestCase):
         self.assertIn("reviewer_shell is 'none'",
                       self.status("off", CLAUDE_PLUGIN_OPTION_REVIEWER_SHELL="none"))
 
-    def test_the_line_names_block_all_and_the_settings_file(self):
-        self.configure('{"reviewer_shell": "block-all", "builder_agents": [], "qa_commands": ["make"]}')
-        self.assertEqual(self.status("always"),
+    def test_the_line_names_block_all_and_the_settings_files(self):
+        self.configure('{"reviewer_shell": "block-all", "qa_commands": ["make"]}')
+        self.accept("make")
+        self.assertEqual(self.status("always", CLAUDE_PLUGIN_OPTION_BUILDER_AGENTS=""),
                          "invigilator is on. Reviewers (*reviewer*) can't write files or run shell "
                          "commands. The QA check is off because no agent counts as a builder. "
-                         "Settings: .claude/invigilator.json.")
+                         f"Settings: .claude/invigilator.json and {self.user / 'invigilator.json'}.")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,16 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## 0.3.6
+
+### Changed
+
+- A repository can no longer turn a check off. Its `.claude/invigilator.json` used to win over your plugin options, so a repo you cloned could ship `"reviewer_agents": []`, drop every builder, or relax `reviewer_shell`. The file now only adds: its reviewer and builder names join yours, and `reviewer_shell` takes the stricter of the two.
+- A QA command in the project file is now a proposal. Only the QA commands you accept for a project count, and they live in your own `invigilator.json` in your Claude Code config folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`), keyed by project folder. A key covers the folders under it, and `*` in it matches any characters, so one key can cover a project's worktrees. `/invigilator:setup` writes both files. Until you accept a proposed command, the line at session start names it and says it doesn't count yet. **If you set `qa_commands` in a project file before this version, run `/invigilator:setup` once in that project to accept it; until then the QA check is off there.**
+- The hooks ask you before any agent changes your own `invigilator.json`, as they do for the project file.
+- `INVIGILATOR_PYTHON` counts only when it is outside the project, so a repo can't choose the program that runs its own checks. One inside the project is skipped, and if no other Python runs, the warning says why.
+- A `CLAUDE_CONFIG_DIR` inside the project is ignored for the same reason, and you are told.
+
 ## 0.3.5
 
 ### Changed

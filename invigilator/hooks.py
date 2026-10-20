@@ -27,14 +27,26 @@ Agent patterns are shell-style globs, matched without case against the
 agent_type field Claude Code puts in the hook input. "main" stands for the
 main session when it runs without --agent. reviewer_shell is "block-writes"
 to deny only shell commands that write files, or "block-all" to deny every
-shell command. The QA hook does nothing until qa_commands names a command.
+shell command. The QA hook does nothing until a QA command counts.
 
 Plugin options are the values a user sets with /plugin configure. Claude
 Code keeps them per user, not per project, and passes each one to hooks as
-CLAUDE_PLUGIN_OPTION_<KEY>. They can set who counts as a reviewer or a
-builder and the reviewer shell rule. A field in the project file overrides
-the option, and qa_commands can only be set there, since a QA command
-belongs to a project.
+CLAUDE_PLUGIN_OPTION_<KEY>. They set who counts as a reviewer or a builder
+and the reviewer shell rule. The project file can add reviewers and builders
+and make the shell rule block-all, but it can't take any of them away, since a
+repository someone clones must not be able to turn a check off.
+
+For the same reason the project file's qa_commands only propose what counts
+as QA. The commands that count are the ones the user accepted for the project
+in their own config, invigilator.json in the Claude Code config folder
+(CLAUDE_CONFIG_DIR, else ~/.claude):
+
+    {"projects": {"~/code/shop": {"qa_commands": ["npm run check"]}}}
+
+A key is a project folder and covers the folders under it. A * in a key
+matches any characters, slashes included, so "~/code/shop*" also covers a
+worktree such as ~/code/shop-fix. When several keys match, the longest wins.
+A CLAUDE_CONFIG_DIR inside the project is ignored.
 """
 import fnmatch
 import hashlib
@@ -75,30 +87,111 @@ def plugin_options(environ):
 
 def load_config(project_dir, environ=None):
     """(config, problem): the defaults, then the plugin options in environ (os.environ when
-    it is None), then each field the project file sets. A missing file leaves the defaults
-    and options. A broken file leaves them too, with a problem to show the user, since a
-    typo should not pass quietly. A bad option value is left out; plugin_options() names it."""
+    it is None), then what the project file adds, and the QA commands the user accepted for
+    the project. A missing file leaves the defaults and options. A broken file leaves them
+    too, with a problem to show the user, since a typo should not pass quietly. The problem
+    is one or more sentences without the last full stop. A bad option value is left out;
+    plugin_options() names it."""
     environ = os.environ if environ is None else environ
     base = {**DEFAULTS, **plugin_options(environ)[0]}
+    accepted, _, user_problem = accepted_qa_commands(project_dir, environ)
+    base["qa_commands"] = accepted or []
+    data, problem = project_file(project_dir)
+    if problem or not data:
+        problem = problem and f"{problem}. Using the default config"
+        return base, ". ".join(p for p in (problem, user_problem) if p)
+    config = {key: base[key] + [p for p in data.get(key, []) if p not in base[key]] for key in LIST_OPTIONS}
+    config["reviewer_shell"] = "block-all" if "block-all" in (base["reviewer_shell"], data.get("reviewer_shell")) \
+        else base["reviewer_shell"]
+    config["qa_commands"] = base["qa_commands"]
+    return config, user_problem
+
+
+def project_file(project_dir):
+    """(the fields in the project's .claude/invigilator.json, problem). {} when there is none."""
     path = Path(project_dir) / CONFIG
     if not path.is_file():
-        return base, ""
+        return {}, ""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
-        return base, f"{path} could not be read ({err})"
+        return {}, f"{path} could not be read ({err})"
     if not isinstance(data, dict):
-        return base, f"{path} must hold a JSON object"
+        return {}, f"{path} must hold a JSON object"
     unknown = sorted(set(data) - set(DEFAULTS))
     if unknown:
-        return base, f"{path} has an unknown field {unknown[0]!r}"
-    config = {**base, **data}
+        return {}, f"{path} has an unknown field {unknown[0]!r}"
     for key in ("reviewer_agents", "builder_agents", "qa_commands"):
-        if not isinstance(config[key], list) or not all(isinstance(v, str) for v in config[key]):
-            return base, f"{path}: {key!r} must be a list of strings"
-    if config["reviewer_shell"] not in SHELL_MODES:
-        return base, f"{path}: \"reviewer_shell\" must be \"block-writes\" or \"block-all\""
-    return config, ""
+        if not _strings(data.get(key, [])):
+            return {}, f"{path}: {key!r} must be a list of strings"
+    if data.get("reviewer_shell", SHELL_MODES[0]) not in SHELL_MODES:
+        return {}, f"{path}: \"reviewer_shell\" must be \"block-writes\" or \"block-all\""
+    return data, ""
+
+
+def _strings(value):
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+
+def proposed_qa_commands(project_dir, config):
+    """The QA commands the project file names that don't count, because the user hasn't accepted them."""
+    data, problem = project_file(project_dir)
+    return [] if problem else [qa for qa in data.get("qa_commands", []) if qa not in config["qa_commands"]]
+
+
+def user_config_path(project_dir, environ):
+    """(the user's own config file, problem): invigilator.json in CLAUDE_CONFIG_DIR, else in
+    ~/.claude. None when CLAUDE_CONFIG_DIR is inside the project, since a repository must not
+    choose the file that decides what counts as QA."""
+    folder = environ.get("CLAUDE_CONFIG_DIR")
+    if not folder:
+        return Path(os.path.expanduser("~")) / ".claude" / "invigilator.json", ""
+    folder = os.path.abspath(os.path.expanduser(folder))
+    if _inside(folder, project_dir):
+        return None, (f"CLAUDE_CONFIG_DIR ({folder}) is inside the project, so the QA commands "
+                      "you accepted there don't count")
+    return Path(folder) / "invigilator.json", ""
+
+
+def _inside(path, folder):
+    """True when path is folder or under it, after following links."""
+    path, folder = os.path.realpath(path), os.path.realpath(folder)
+    try:
+        return os.path.normcase(os.path.commonpath([path, folder])) == os.path.normcase(folder)
+    except ValueError:  # on different Windows drives
+        return False
+
+
+def accepted_qa_commands(project_dir, environ):
+    """(the QA commands the user accepted for this project, or None when no entry covers it,
+    the user's config file, problem)."""
+    path, problem = user_config_path(project_dir, environ)
+    if path is None or not path.is_file():
+        return None, path, problem
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+        return None, path, f"{path} could not be read ({err}), so no QA command counts"
+    projects = data.get("projects") if isinstance(data, dict) else None
+    if not isinstance(projects, dict) or set(data) != {"projects"}:
+        return None, path, f'{path} must hold {{"projects": {{...}}}} and nothing else, so no QA command counts'
+    names = {_comparable(os.path.abspath(project_dir)), _comparable(os.path.realpath(project_dir))}
+    best = None
+    for key, entry in projects.items():
+        if not isinstance(entry, dict) or set(entry) != {"qa_commands"} or not _strings(entry["qa_commands"]):
+            return None, path, (f'{path}: the entry for {key!r} must be {{"qa_commands": [...]}}, '
+                                "so no QA command counts")
+        pattern = _comparable(os.path.expanduser(key)).rstrip("/") or "/"
+        if any(fnmatch.fnmatchcase(n, pattern) or fnmatch.fnmatchcase(n, pattern + "/*") for n in names) \
+                and (best is None or len(key) > len(best[0])):
+            best = (key, entry["qa_commands"])
+    return (best[1] if best else None), path, ""
+
+
+def _comparable(path):
+    """A path with forward slashes, without case on Windows and macOS, whose disks usually ignore it."""
+    path = path.replace("\\", "/")
+    return path.lower() if sys.platform in ("win32", "darwin") else path
 
 
 def matches(agent, patterns):
@@ -125,20 +218,28 @@ def reviewer_readonly(event, config):
 
 
 def _ask_before_config_change(event):
-    """Any agent that writes the project's config could turn the checks off, so the user decides."""
+    """Any agent that writes the project's config, or the user's own, could change the checks,
+    so the user decides."""
     tool, tool_input = event.get("tool_name", ""), event.get("tool_input") or {}
     project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "."
+    cwd = event.get("cwd") or project
     path = os.path.join(os.path.abspath(project), str(CONFIG))
-    reason = readonly.touch_check(tool, tool_input, path, event.get("cwd") or project)
-    if not reason:
-        return None
+    reason = readonly.touch_check(tool, tool_input, path, cwd)
+    if reason:
+        what = (f"{CONFIG.as_posix()}. That file sets who counts as a reviewer or a builder and "
+                "proposes the project's QA commands, so changing it changes the release checks")
+    else:
+        user_file = user_config_path(project, os.environ)[0]
+        reason = user_file and readonly.touch_check(tool, tool_input, str(user_file), cwd)
+        if not reason:
+            return None
+        what = (f"your own invigilator config, {user_file}. That file decides which QA commands "
+                "count for your projects, so changing it can turn the QA check off or weaken it")
     return {"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "ask",
-        "permissionDecisionReason": (
-            f"invigilator: this {tool} call {reason}, which changes {CONFIG.as_posix()}. That "
-            "file sets who counts as a reviewer or a builder and which QA commands must pass, so "
-            "changing it can turn the release checks off or change them. It needs your OK.")}}
+        "permissionDecisionReason": f"invigilator: this {tool} call {reason}, which changes {what}. "
+                                    "It needs your OK."}}
 
 
 def _deny_reviewer_write(event, config):
@@ -503,7 +604,7 @@ def main(hook):
     config, problem = load_config(project)
     output = hook(event, config) or {}
     if problem:
-        output["systemMessage"] = f"invigilator: {problem}. Using the default config."
+        output["systemMessage"] = f"invigilator: {problem}."
     if output:
         print(json.dumps(output))
     return 0
