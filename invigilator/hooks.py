@@ -40,6 +40,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shlex
 import sys
 import tempfile
@@ -439,6 +440,11 @@ def _block_once(event, verdict, agent, commands, files, note):
         {"decision": "block", "reason": reason}
 
 
+MARKER_PREFIX = "qa-stop-"
+MARKER_NAME = re.compile(re.escape(MARKER_PREFIX) + "[0-9a-f]{32}")
+MARKER_DAYS = 30  # a marker older than this is deleted the next time the hook writes one
+
+
 def _marker(session, kind, call):
     """The marker file for a session, a kind ("failed" or "check-edited" for a block, "reported"
     for a change to the check the user was told about) and the call that decided it: the last
@@ -448,7 +454,7 @@ def _marker(session, kind, call):
     key = f"{session}\n{kind}\n{call_id}"
     data = os.environ.get("CLAUDE_PLUGIN_DATA")
     folder = Path(data) / "qa-blocked" if data else Path(tempfile.gettempdir()) / "invigilator-qa-blocked"
-    return folder / hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+    return folder / (MARKER_PREFIX + hashlib.sha256(key.encode("utf-8")).hexdigest()[:32])
 
 
 def _blocked_before(marker):
@@ -461,7 +467,26 @@ def _blocked_before(marker):
         os.close(os.open(str(marker), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
     except FileExistsError:
         return True
+    _prune(marker.parent)
     return False
+
+
+def _prune(folder):
+    """Delete this hook's own markers in folder that are older than MARKER_DAYS, by their names.
+    A best effort: a file that can't be read or deleted is left, and nothing here raises."""
+    cutoff = time.time() - MARKER_DAYS * 86400
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if not MARKER_NAME.fullmatch(entry.name):
+                    continue
+                try:
+                    if entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                        os.unlink(entry.path)
+                except OSError:
+                    continue  # gone already, or not this user's to delete
+    except OSError:
+        pass  # best effort: the folder can't be listed
 
 
 def main(hook):

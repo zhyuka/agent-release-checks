@@ -580,6 +580,32 @@ class BlockOnceTest(TempDir):
         self.assertEqual(len(list((temp / "invigilator-qa-blocked").iterdir())), 1)
         self.assertNotIn("decision", self.stop(path, data="", env=env))
 
+    def test_old_markers_of_its_own_are_deleted(self):
+        folder = self.data / "qa-blocked"
+        folder.mkdir(parents=True)
+        old_marker, fresh_marker = folder / ("qa-stop-" + "a" * 32), folder / ("qa-stop-" + "b" * 32)
+        unrelated, lookalike = folder / "notes.txt", folder / ("qa-stop-" + "c" * 31)
+        month_ago = time.time() - 31 * 86400
+        for file in (old_marker, fresh_marker, unrelated, lookalike):
+            file.write_text("")
+            if file is not fresh_marker:
+                os.utime(file, (month_ago, month_ago))
+        path = self.add(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False))
+        self.assertEqual(self.stop(path)["decision"], "block")
+        left = sorted(p.name for p in folder.iterdir())
+        self.assertNotIn(old_marker.name, left, "an old marker of its own is deleted")
+        self.assertIn(fresh_marker.name, left, "a fresh marker stays")
+        self.assertIn(unrelated.name, left, "a file that is not a marker stays, however old")
+        self.assertIn(lookalike.name, left, "so does one that only starts like a marker")
+        self.assertEqual(len([n for n in left if hooks.MARKER_NAME.fullmatch(n)]), 2, "fresh marker and the new one")
+        self.assertNotIn("decision", self.stop(path), "the new marker still works")
+        # A best effort: a folder that can't be listed, or a marker that can't be deleted, raises nothing.
+        hooks._prune(self.tmp / "no such folder")
+        os.utime(fresh_marker, (month_ago, month_ago))
+        with mock.patch.object(os, "unlink", side_effect=PermissionError("denied")):
+            hooks._prune(folder)
+        self.assertTrue(fresh_marker.exists())
+
     def test_subagent_stops_follow_the_same_rules(self):
         path = self.add(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False))
         self.assertIn("failed after your last edit", self.stop(path, subagent=True)["reason"])
