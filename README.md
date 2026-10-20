@@ -9,7 +9,9 @@ Two Claude Code hooks for projects where agents write and review code.
 - A reviewer can't write files. When an agent your config names as a reviewer calls Edit or Write, or runs a shell command that writes, such as `sed -i`, `rm` or a `>` redirect, the hook denies the call and tells the agent to put the change in its review.
 - A builder can't stop early. If it edited files after its last passing QA command, the stop hook sends it back to run QA, and if QA can't pass, to tell you why. A QA run piped into `tail` or ended with `|| true` doesn't count, because its exit code is hidden.
 
-<!-- TODO: demo GIF at docs/demo.gif, 10 to 20 seconds: a reviewer's sed -i is denied, then a builder's stop is blocked until npm run check passes. Add it here as a Markdown image once the file exists. -->
+![A replay of two recorded eval runs. A reviewer runs sed -i on notes.md, invigilator denies it and then denies the reviewer's Edit, and the reviewer puts the fix in its review. A builder pipes its QA run into tail, the stop hook sends it back, and it runs python3 qa.py on its own, passes and stops.](docs/demo.gif)
+
+Replayed from two recorded eval runs, `evals/reviewer-sed-i` and `evals/builder-piped-qa`, on Claude Code 2.1.288 with Claude Haiku 4.5.
 
 Install from a Claude Code session:
 
