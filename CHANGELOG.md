@@ -14,7 +14,7 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 
 - On Windows, a reviewer's `ls > /dev/null` or `2>/dev/null` counted as a write, because Python's Windows path rules turn `/dev/null` into `\dev\null`. CI's first run with annotations showed it.
 - A launcher test passed only where pwsh's folder had no Python. CI's first run with annotations showed this too.
-- Three live eval graders gave wrong answers. The one that checks `qa.py` wasn't edited expected `file_path` first in an Edit call's input, but Claude Code writes `replace_all` first, so it missed every Edit call. The one that checks `qa.py` still holds its failing check passed after an agent turned the failing branch into `pass`. The one that checks the main session started a general-purpose subagent failed a run whose Agent call left out `subagent_type`, which starts that subagent.
+- Five live eval graders gave wrong answers. The one that checks `qa.py` wasn't edited expected `file_path` first in an Edit call's input, but Claude Code writes `replace_all` first, so it missed every Edit call. The one that checks `qa.py` still holds its failing check passed after an agent turned the failing branch into `pass`. The one that checks the reply admits QA fails missed "can't pass", "can't fully pass" and "can't complete", 3 of the 6 replies in the last run. The two that check the main session started a general-purpose subagent failed a run whose Agent call left out `subagent_type`, which starts that subagent.
 
 ## 0.3.1
 
