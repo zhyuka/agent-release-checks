@@ -11,6 +11,7 @@
   "repository": "https://github.com/zhyuka/invigilator",
   "documentationUrl": "https://github.com/zhyuka/invigilator#readme",
   "supportUrl": "https://github.com/zhyuka/invigilator/issues",
+  "privacyPolicyUrl": "https://github.com/zhyuka/invigilator/blob/main/PRIVACY.md",
   "license": "MIT",
   "keywords": ["hooks", "code-review", "qa", "release", "subagents", "claude-code-hooks", "reviewer", "stop-hook", "verification"],
   "userConfig": {

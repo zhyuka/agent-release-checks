@@ -107,6 +107,8 @@ A project file with bad JSON, an unknown field or a wrong type makes the hooks f
 - Each hook runs `sh`, or on Windows without Git Bash runs `hooks/run.ps1` in Windows PowerShell, to find Python, and then runs this plugin's scripts with it. To find Python, `hooks/run.sh` also calls `dirname`, `uname`, `sed`, `head` and `printf`, and `xcode-select -p` on macOS. The Python scripts start no other program. Nothing else runs, and nothing leaves the machine.
 - A hook acts only on the agents your settings name. Every other agent is left alone.
 
+[Privacy](PRIVACY.md) says the same on one page.
+
 ## What each hook blocks
 
 `hooks/reviewer_readonly.py` runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls. When the acting agent is a reviewer, it denies:
