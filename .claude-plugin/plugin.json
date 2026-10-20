@@ -2,7 +2,7 @@
   "name": "invigilator",
   "displayName": "Invigilator",
   "version": "0.3.3",
-  "description": "Hooks that keep reviewer agents read-only and keep a builder from stopping until its QA command passes after its last edit.",
+  "description": "Hooks that keep reviewer agents read-only, and keep a builder from stopping until it runs its QA command after its last edit. If QA fails, it is sent back once, then you're told.",
   "author": {
     "name": "Derek Zhou",
     "url": "https://github.com/zhyuka"
