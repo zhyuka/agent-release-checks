@@ -2,6 +2,20 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## 0.3.2
+
+### Changed
+
+- When QA ran on its own after the last edit and failed, the QA hook blocks only the first stop. Its reason tells the builder to fix the cause and run QA again. If a check can't pass here, the builder should stop and tell you which check fails and why, and not edit the QA command, the files it runs or `.claude/invigilator.json` to get it to pass. The next stop with no new edit goes through, and you see a message that QA failed. Before, the hook blocked every stop until QA passed. In the live eval where QA can't pass, Claude Haiku 4.5 then edited `qa.py` to skip the failing check in 4 of 6 runs and said QA passed, and one more run hit its turn limit. With this change the plugin arm scored 0.94 and 0.89, up from 0.56 and 0.67. No run edited `qa.py`, all 6 ended, and each one stopped after a single block for the failure and said QA can't pass here.
+- A pass doesn't count when it came after the builder changed a file the QA command runs, such as `qa.py` in `python3 qa.py`, while QA was failing. The hook blocks the first stop and asks the builder to undo the change, or to tell you what it changed and why. The next stop with no new edit goes through, with a message that names the file.
+- The QA hook keeps an empty file for each stop it has blocked once, in the plugin's data folder, or in the temp folder when there is none. If it can't write the file, it blocks every such stop, as before.
+
+### Fixed
+
+- On Windows, a reviewer's `ls > /dev/null` or `2>/dev/null` counted as a write, because Python's Windows path rules turn `/dev/null` into `\dev\null`. CI's first run with annotations showed it.
+- A launcher test passed only where pwsh's folder had no Python. CI's first run with annotations showed this too.
+- Three live eval graders gave wrong answers. The one that checks `qa.py` wasn't edited expected `file_path` first in an Edit call's input, but Claude Code writes `replace_all` first, so it missed every Edit call. The one that checks `qa.py` still holds its failing check passed after an agent turned the failing branch into `pass`. The one that checks the main session started a general-purpose subagent failed a run whose Agent call left out `subagent_type`, which starts that subagent.
+
 ## 0.3.1
 
 ### Fixed
