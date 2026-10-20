@@ -175,25 +175,25 @@ RESULT_WAIT = 1.0  # how long to wait for a QA result Claude Code has not writte
 LOOK_BACK = 64 << 20
 
 
-def _verdict(calls, qa_commands, ran_before=False, scope=None, checks=None):
+def _verdict(calls, qa_commands, ran_before=False, scope=None, checks=None, reported=None):
     """step_ran.qa_ran() for calls, or None when nothing in calls wrote files. ran_before
     says whether a QA command ran before the first of calls, or is None when that is not known.
-    With checks, as for step_ran.check_edit(), a pass that came after a change to a file the QA
-    command runs, made while QA was failing, does not count."""
+    With checks and reported, as for step_ran.check_edit(), a pass that came after a change to
+    a file the QA command runs, made while QA was failing, does not count."""
     written = step_ran.last_write(calls, qa_commands, scope)
     if written < 0:
         return None
     verdict = step_ran.qa_ran(calls, qa_commands, ran_before, written)
     if verdict.accepted and checks:
-        edit, name = step_ran.check_edit(calls, qa_commands, checks)
+        edit, name = step_ran.check_edit(calls, qa_commands, checks, reported)
         if edit is not None:
-            return _check_edited(verdict.write, name)
+            return _check_edited(verdict.write, name, edit)
     return verdict
 
 
-def _check_edited(write, name):
+def _check_edited(write, name, edit):
     return step_ran.Verdict(False, f"{name}, which the QA command runs, changed after QA failed",
-                            "check-edited", write, name)
+                            "check-edited", write, name, edit)
 
 
 def check_files(qa_commands, project):
@@ -254,7 +254,7 @@ def _ran_before(transcript, call, qa_commands):
     return False if floor == 0 else None
 
 
-def _check_edit_before(transcript, call, qa_commands, checks):
+def _check_edit_before(transcript, call, qa_commands, checks, reported=None):
     """step_ran.check_edit() on the calls before call that run QA or name a file in checks.
     Only the lines that hold a QA command or such a file's name are parsed, and only within
     LOOK_BACK of call, so on a longer transcript a failure before that is not seen."""
@@ -274,18 +274,18 @@ def _check_edit_before(transcript, call, qa_commands, checks):
         if step_ran.qa_status(earlier, qa_commands) == "seen" or any(
                 step_ran.wrote(earlier, qa_commands, scope) for scope in checks.values()):
             transcript.resolve(earlier)
-    return step_ran.check_edit(calls, qa_commands, checks)
+    return step_ran.check_edit(calls, qa_commands, checks, reported)
 
 
-def stop_verdict(path, qa_commands, deadline, scope=None, checks=None):
+def stop_verdict(path, qa_commands, deadline, scope=None, checks=None, reported=None):
     """(verdict, waiting) for the transcript at path, read from the end.
 
     verdict is None when the agent wrote nothing. Its write is the last file write, except
     on a pass, where the reading stops without looking for it. waiting is True when the
     newest QA run after the last write has no result in the file yet, so a second look may
-    find it. With a scope, only the writes that land where it counts are writes. With checks,
-    as for step_ran.check_edit(), a pass that came after a change to a file the QA command
-    runs, made while QA was failing, is a "check-edited" verdict."""
+    find it. With a scope, only the writes that land where it counts are writes. With checks
+    and reported, as for step_ran.check_edit(), a pass that came after a change to a file the
+    QA command runs, made while QA was failing, is a "check-edited" verdict."""
     qa_status = step_ran.qa_status
 
     def wrote(call):
@@ -302,7 +302,7 @@ def stop_verdict(path, qa_commands, deadline, scope=None, checks=None):
                     if status == "seen" and call.ok is True:
                         if _replayed(transcript, call):
                             raise _Replayed()
-                        edit, name = _check_edit_before(transcript, call, qa_commands, checks) \
+                        edit, name = _check_edit_before(transcript, call, qa_commands, checks, reported) \
                             if checks else (None, "")
                         if edit is None:
                             return step_ran.Verdict(True, "QA command passed after the last file write",
@@ -312,7 +312,7 @@ def stop_verdict(path, qa_commands, deadline, scope=None, checks=None):
                     transcript.resolve(call)
                     if wrote(call):
                         if edited:
-                            return _check_edited(call, edited[1]), False
+                            return _check_edited(call, edited[1], edited[0]), False
                         calls = [call] + tail[::-1]
                         verdict = _verdict(calls, qa_commands, _ran_before(transcript, call, qa_commands), scope)
                         newest = next((c for c in tail if qa_status(c, qa_commands)), None)
@@ -321,12 +321,12 @@ def stop_verdict(path, qa_commands, deadline, scope=None, checks=None):
                 tail.append(call)
         except _Replayed:
             calls = runlog.read_transcript(path, deadline)
-            return _verdict(calls, qa_commands, scope=scope, checks=checks), False
+            return _verdict(calls, qa_commands, scope=scope, checks=checks, reported=reported), False
         if edited:
-            return _check_edited(*edited), False
+            return _check_edited(edited[0], edited[1], edited[0]), False
         if transcript.calls_seen == 0 and (transcript.has_other_tool_use() or not transcript.holds_messages()):
             calls = runlog.read_transcript(path, deadline)  # raises when nothing in it is a message
-            return _verdict(calls, qa_commands, scope=scope, checks=checks), False
+            return _verdict(calls, qa_commands, scope=scope, checks=checks, reported=reported), False
         return None, False
 
 
@@ -369,18 +369,23 @@ def qa_before_done(event, config):
     scope = readonly.project_scope(project, cwd)
     files = check_files(qa_commands, project)
     checks = {name: readonly.files_scope([file], cwd) for name, file in files.items()}
+    session = event.get("session_id")
+
+    def reported(call):  # the user was told about this change to a file QA runs, which ended that state
+        return os.path.lexists(_marker(session, "reported", call))
+
     try:
         if not isinstance(path, (str, os.PathLike)) or not str(path):
             raise TypeError("the hook input has no transcript path")
         path = os.path.expanduser(path)
-        verdict, waiting = stop_verdict(path, qa_commands, deadline, scope, checks)
+        verdict, waiting = stop_verdict(path, qa_commands, deadline, scope, checks, reported)
         waited = 0.0
         while waiting and waited < RESULT_WAIT:  # Claude Code writes the transcript asynchronously
             size = os.stat(path).st_size
             time.sleep(0.1)
             waited += 0.1
             if os.stat(path).st_size != size:
-                verdict, waiting = stop_verdict(path, qa_commands, deadline, scope, checks)
+                verdict, waiting = stop_verdict(path, qa_commands, deadline, scope, checks, reported)
     except (OSError, TypeError, ValueError, RecursionError, MemoryError) as err:
         return {"systemMessage": f"invigilator: the QA check did not run for {label(agent)}, "
                                  f"because its transcript could not be read ({err})."}
@@ -399,7 +404,9 @@ def qa_before_done(event, config):
 def _block_once(event, verdict, agent, commands, files, note):
     """Block the first stop after QA failed, or after the check changed, and let a later stop
     with no new write through with a message to the user. A marker file says which states were
-    blocked already. When it can't be written, every such stop is blocked, as before."""
+    blocked already. When it can't be written, every such stop is blocked, as before. Once the
+    user has been told about a change to the check, a second marker ends that state, so a
+    later pass counts again."""
     who = label(agent)
     if verdict.kind == "failed":
         runs = f" ({', '.join(files)})" if files else ""
@@ -417,8 +424,14 @@ def _block_once(event, verdict, agent, commands, files, note):
         told = (f"invigilator: {who} changed {name}, which QA ({commands}) runs, after QA failed, and "
                 "then stopped. The QA pass after that change doesn't count.")
     messages = [note["systemMessage"]] if note else []
+    session = event.get("session_id")
     try:
-        if _blocked_before(_marker(event, verdict)):
+        if _blocked_before(_marker(session, verdict.kind, verdict.write)):
+            if verdict.kind == "check-edited":
+                try:
+                    _blocked_before(_marker(session, "reported", verdict.edit))
+                except OSError:
+                    pass  # the next new state after a pass blocks once more, as before this marker
             return {"systemMessage": " ".join(messages + [told])}
     except OSError as err:
         messages.append(f"invigilator: it could not record this block ({err}), so it will block the next stop too.")
@@ -426,13 +439,13 @@ def _block_once(event, verdict, agent, commands, files, note):
         {"decision": "block", "reason": reason}
 
 
-def _marker(event, verdict):
-    """The marker file for this session, the kind of verdict and the write that decided it, in
-    the plugin's data folder, or in the temp folder when there is none."""
-    write = verdict.write
-    write_id = getattr(write, "id", "") or json.dumps(
-        [getattr(write, "tool", ""), getattr(write, "input", {})], sort_keys=True, default=str)
-    key = f"{event.get('session_id')}\n{verdict.kind}\n{write_id}"
+def _marker(session, kind, call):
+    """The marker file for a session, a kind ("failed" or "check-edited" for a block, "reported"
+    for a change to the check the user was told about) and the call that decided it: the last
+    write, or the change. It is in the plugin's data folder, or in the temp folder without one."""
+    call_id = getattr(call, "id", "") or json.dumps(
+        [getattr(call, "tool", ""), getattr(call, "input", {})], sort_keys=True, default=str)
+    key = f"{session}\n{kind}\n{call_id}"
     data = os.environ.get("CLAUDE_PLUGIN_DATA")
     folder = Path(data) / "qa-blocked" if data else Path(tempfile.gettempdir()) / "invigilator-qa-blocked"
     return folder / hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]

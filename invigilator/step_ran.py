@@ -55,12 +55,14 @@ class Verdict:
     "passed", "failed" (QA ran on its own after the last write and failed), "not-run", "hidden"
     (a pipe, || true or a later command decided the exit code), "unrecorded", or "check-edited"
     (the Stop hook's: a file the QA command runs changed after QA failed). write is the call that
-    made the last file write, when there was one, and check_file names the changed file."""
+    made the last file write, when there was one. check_file names the changed file, and edit is
+    the call that changed it."""
     accepted: bool
     reason: str
     kind: str = ""
     write: object = None
     check_file: str = ""
+    edit: object = None
 
 
 def verify(claim, build, artifacts):
@@ -317,21 +319,24 @@ def qa_ran(calls, qa_commands, ran_before=False, written=None, scope=None):
     return verdict(False, "QA command ran but its result was not recorded", "unrecorded")
 
 
-def check_edit(calls, qa_commands, checks):
+def check_edit(calls, qa_commands, checks, reported=None):
     """(call, name) for the first of calls that wrote a file the QA command runs while QA was
     failing, or (None, ""). checks maps each such file's name to a readonly.files_scope() for it.
 
     QA is failing from a QA run that failed with its exit code in plain view until one that
-    passed. A pass after such a write doesn't end it, since the pass may come from the change."""
+    passed. A pass after such a write doesn't end it, since the pass may come from the change.
+    reported(call) is True for a change the user has been told about, which does end it."""
     failing = False
     for call in calls:
         status = qa_status(call, qa_commands)
         if status == "seen" and call.ok is not None:
             failing = call.ok is False
         elif failing and not status:
-            for name, scope in checks.items():
-                if wrote(call, qa_commands, scope):
-                    return call, name
+            name = next((name for name, scope in checks.items() if wrote(call, qa_commands, scope)), None)
+            if name is not None and reported is not None and reported(call):
+                failing = False
+            elif name is not None:
+                return call, name
     return None, ""
 
 

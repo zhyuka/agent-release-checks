@@ -497,8 +497,8 @@ class BlockOnceTest(TempDir):
                 ("inline Python", [tool_use("toolu_c", "Bash", {
                     "command": "python3 - <<'EOF'\nopen('qa.py', 'w').write('pass')\nEOF"}), tool_result("toolu_c")])):
             data = self.tmp / f"data-{how}"
-            path = self.transcript(lines(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False), *change,
-                                         *qa_run("toolu_q2", True), *DONE), f"{how}.jsonl")
+            records = edit("toolu_e1", self.greet) + qa_run("toolu_q1", False) + change + qa_run("toolu_q2", True)
+            path = self.transcript(lines(*records, *DONE), f"{how}.jsonl")
             first = self.stop(path, data=data)
             self.assertEqual(first.get("decision"), "block", how)
             self.assertIn("you changed qa.py, which the QA command runs, after QA failed, and a pass that "
@@ -506,16 +506,34 @@ class BlockOnceTest(TempDir):
                           "the user what you changed and why.", first["reason"])
             told = ("invigilator: the main session changed qa.py, which QA (`python3 qa.py`) runs, after QA "
                     "failed, and then stopped. The QA pass after that change doesn't count.")
+            # A QA re-run after the block is the same state, so the next stop goes through and tells the user.
+            path = self.transcript(lines(*records, *qa_run("toolu_q3", True), *DONE), f"{how}.jsonl")
             self.assertEqual(self.stop(path, data=data), {"systemMessage": told}, how)
-            path = self.transcript(lines(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False), *change,
-                                         *qa_run("toolu_q2", True), *qa_run("toolu_q3", True), *DONE), f"{how}.jsonl")
-            self.assertEqual(self.stop(path, data=data), {"systemMessage": told}, "a QA re-run is the same state")
+            self.assertEqual(self.stop(path, data=data), {}, f"{how}: the user was told, so that state is over")
         # Undoing the change is a new write, so the stop after it blocks once more.
         path = self.transcript(lines(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False),
                                      *edit("toolu_c", self.qa, "failures.append(", "pass  # "),
                                      *qa_run("toolu_q2", True), *edit("toolu_u", self.qa, "pass  # ", "failures.append("),
                                      *qa_run("toolu_q3", False), *DONE), "undone.jsonl")
         self.assertIn("failed after your last edit", self.stop(path, data=self.tmp / "data-Edit")["reason"])
+
+    def test_once_the_user_is_told_about_a_change_to_the_check_a_pass_counts_again(self):
+        path = self.add(*edit("toolu_e1", self.greet), *qa_run("toolu_q1", False),
+                        *edit("toolu_c1", self.qa, "failures.append(", "pass  # "), *qa_run("toolu_q2", True))
+        self.assertIn("you changed qa.py", self.stop(path)["reason"])
+        self.assertIn("the main session changed qa.py", self.stop(path)["systemMessage"])
+        # That state is over: a later write and a pass let the agent stop with nothing to say.
+        path = self.add(*edit("toolu_e2", self.greet, "Hello", "Hello!"), *qa_run("toolu_q3", True))
+        self.assertEqual(self.stop(path), {})
+        # A later failure starts fresh, under the rule for a failure.
+        path = self.add(*edit("toolu_e3", self.greet, "Hello!", "Hello"), *qa_run("toolu_q4", False))
+        self.assertIn("QA (`python3 qa.py`) failed after your last edit", self.stop(path)["reason"])
+        self.assertIn("failed after the main session's last edit", self.stop(path)["systemMessage"])
+        # And a change to the check after that failure is a new change to report.
+        path = self.add(*edit("toolu_c2", self.qa, "x = 1", "x = 2"), *qa_run("toolu_q5", True))
+        self.assertIn("you changed qa.py", self.stop(path)["reason"])
+        self.assertIn("the main session changed qa.py", self.stop(path)["systemMessage"])
+        self.assertEqual(self.stop(path), {})
 
     def test_a_change_to_the_check_before_any_failure_is_normal_work(self):
         change = edit("toolu_c", self.qa, "x = 1", "x = 2")
@@ -603,6 +621,13 @@ class BlockOnceTest(TempDir):
                                  "changed before": ("passed", None),
                                  "failed": ("failed", "toolu_e1"),
                                  "failed after a change": ("failed", "toolu_c")})
+        # A change the user was told about ends that state on both readings, copied record or not.
+        for name in ("changed after a failure", "changed, then more work", "a copied pass"):
+            path = self.tmp / f"{name}.jsonl"
+            told = lambda call: call.id == "toolu_c"  # noqa: E731
+            forward = hooks._verdict(runlog.read_transcript(path), self.QA, scope=scope, checks=checks, reported=told)
+            backward, _ = hooks.stop_verdict(path, self.QA, runlog.Deadline(30), scope, checks, told)
+            self.assertEqual([(v.accepted, v.kind) for v in (forward, backward)], [(True, "passed")] * 2, name)
 
     def test_only_the_lines_that_decide_are_parsed(self):
         reads = [tool_use(f"toolu_r{n}", "Read", {"file_path": f"/p/src/{n}.js"}) for n in range(5000)]
