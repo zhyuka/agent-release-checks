@@ -33,8 +33,10 @@ def run(argv):
     """Run the hook named in argv[0] on the input on stdin and print its answer. Always 0."""
     name = argv[0] if argv else ""
     reconfigure = getattr(sys.stdin, "reconfigure", None)
-    if reconfigure:  # Claude Code sends UTF-8; Python on Windows would read the locale's code page
-        reconfigure(encoding="utf-8", errors="replace")
+    if reconfigure:  # Claude Code sends UTF-8; Python on Windows would read the locale's code page.
+        # utf-8-sig skips a leading byte order mark, which Windows PowerShell 5.1 can add
+        # to what it pipes to Python. It does on GitHub's Windows runners.
+        reconfigure(encoding="utf-8-sig", errors="replace")
     answer = io.StringIO()
     try:
         with contextlib.redirect_stdout(answer):

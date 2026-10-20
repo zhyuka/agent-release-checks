@@ -2,6 +2,12 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## 0.3.3
+
+### Fixed
+
+- On Windows without Git Bash, the hooks could let every call and every stop through. Windows PowerShell 5.1 can put a byte order mark before the hook input it pipes to Python, and Python then read the input as not JSON. The hooks now skip a byte order mark at the start of their input. CI's Windows PowerShell 5.1 run of 0.3.2 showed it in all 9 fixtures that expect a deny or a block. pwsh and Git Bash were not affected.
+
 ## 0.3.2
 
 ### Changed

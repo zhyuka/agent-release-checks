@@ -274,6 +274,17 @@ class RunPyTest(unittest.TestCase):
                                       env={"PYTHONIOENCODING": "cp1252:replace"})
         self.assertEqual((code, output), (0, {"systemMessage": text}))
 
+    def test_a_byte_order_mark_before_the_input_is_skipped(self):
+        # Windows PowerShell 5.1 adds one to what it pipes to Python on GitHub's Windows runners.
+        payload = b"\xef\xbb\xbf" + (FIXTURES / "deny-reviewer-write.json").read_bytes()
+        with tempfile.TemporaryDirectory() as project:
+            env = {k: v for k, v in os.environ.items()
+                   if not k.startswith(("CLAUDE_PLUGIN_", "CLAUDE_PROJECT_DIR"))}
+            env["CLAUDE_PROJECT_DIR"] = project
+            done = subprocess.run([sys.executable, str(ROOT / "hooks" / "run.py"), "reviewer_readonly"],
+                                  input=payload, capture_output=True, cwd=ROOT, env=env, timeout=60)
+        self.assertEqual(outcome(json.loads(done.stdout)), "deny", done.stderr)
+
     def test_plugin_options_reach_the_hooks(self):
         with tempfile.TemporaryDirectory() as project:
             event = json.loads((FIXTURES / "deny-reviewer-write.json").read_text())

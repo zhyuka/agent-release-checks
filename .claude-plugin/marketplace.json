@@ -12,7 +12,7 @@
     {
       "name": "invigilator",
       "source": "./",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "description": "Hooks that keep reviewer agents read-only and keep a builder from stopping until its QA command passes after its last edit.",
       "category": "code-quality",
       "tags": ["hooks", "code-review", "qa", "subagents", "verification"],
