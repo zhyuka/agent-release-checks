@@ -12,6 +12,10 @@ Each version here matches `version` in `.claude-plugin/plugin.json`, the marketp
 - `INVIGILATOR_PYTHON` counts only when it is outside the project, so a repo can't choose the program that runs its own checks. One inside the project is skipped, and if no other Python runs, the warning says why.
 - A `CLAUDE_CONFIG_DIR` inside the project is ignored for the same reason, and you are told.
 
+### Fixed
+
+- The four builder live evals set `qa_commands` only in the project file, which this version treats as a proposal, so the QA check was off in them and they tested nothing. Their scaffold now also accepts the command in the user's own `invigilator.json` for the eval's run folders, as `/invigilator:setup` does.
+
 ## 0.3.5
 
 ### Changed

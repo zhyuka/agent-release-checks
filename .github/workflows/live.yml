@@ -124,9 +124,11 @@ jobs:
           claude plugin validate .claude-plugin/plugin.json
           claude plugin validate .
 
-      # --scaffold runs each case's scaffold.sh, which only writes fixture
-      # files. --trust-plugin answers the first-run trust prompt. The cost
-      # ceiling is a list-price estimate checked before each run starts.
+      # --scaffold runs each case's scaffold.sh, which writes fixture files.
+      # The builder cases' scaffolds also accept their QA command in the
+      # runner's own ~/.claude/invigilator.json, as /invigilator:setup would.
+      # --trust-plugin answers the first-run trust prompt. The cost ceiling is
+      # a list-price estimate checked before each run starts.
       - name: Run the live evals
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
