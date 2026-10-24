@@ -95,11 +95,9 @@ def main(argv=None):
     parser.add_argument("--out", default=str(Path(tempfile.gettempdir()) / "invigilator-triggers.json"))
     args = parser.parse_args(argv)
     skills = args.skill or sorted(p.stem for p in QUERIES.glob("*.json"))
-    jobs = []
-    for skill in skills:
-        for item in json.loads((QUERIES / f"{skill}.json").read_text(encoding="utf-8")):
-            for number in range(args.runs):
-                jobs.append((skill, item, number))
+    queries = {skill: json.loads((QUERIES / f"{skill}.json").read_text(encoding="utf-8")) for skill in skills}
+    # Run number outermost, so a stop at --max-cost leaves fewer runs of every query, not no runs of the last skill.
+    jobs = [(skill, item, number) for number in range(args.runs) for skill in skills for item in queries[skill]]
     spent, lock, results = [0.0], threading.Lock(), []
 
     def work(job):

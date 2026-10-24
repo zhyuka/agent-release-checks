@@ -70,16 +70,25 @@ def main(argv=None):
     if None in docs.values():
         return 2
     print(f"\nShipping rule, cases tagged {args.tag}, {args.runs} runs each. Results: {scratch}")
-    print(f"  {'case':<24} {'skill':>6} {'one-line body':>14}")
+    print(f"  {'case':<24} {'skill':>6} {'one-line body':>14}  runs that errored (skill, one-line)")
     scores = {arm: {c["name"]: (c.get("aggregates") or {}).get("score") for c in doc.get("cases") or []}
               for arm, doc in docs.items()}
+    errored = {arm: {c["name"]: sum(bool(r.get("error")) for r in (c.get("arms") or {}).get("with") or [])
+                     for c in doc.get("cases") or []} for arm, doc in docs.items()}
     for name in scores["skill"]:
         mine, stub = scores["skill"][name], scores["one-line body"].get(name)
-        print(f"  {name:<24} {mine if mine is None else f'{mine:.2f}':>6} {stub if stub is None else f'{stub:.2f}':>14}")
+        print(f"  {name:<24} {mine if mine is None else f'{mine:.2f}':>6} {stub if stub is None else f'{stub:.2f}':>14}"
+              f"  {errored['skill'].get(name, 0)}, {errored['one-line body'].get(name, 0)}")
     for arm, doc in docs.items():
         print(f"  {arm}: ${doc.get('costUsd', 0):.2f}, {doc.get('durationSeconds', 0)} s"
               + (" (partial)" if doc.get("partial") else ""))
     print("  Per grader: python3 evals/summarize.py <result.json>")
+    # A run that ended on an error (a usage limit, an expired login, a timeout) scores 0 without
+    # being graded, so it would make the other copy look better. Such a result is no comparison.
+    bad = sum(sum(counts.values()) for counts in errored.values())
+    if bad or any(doc.get("partial") for doc in docs.values()):
+        print(f"  NOT A COMPARISON: {bad} runs ended on an error or the run was partial. Run it again.")
+        return 2
     return 0
 
 
