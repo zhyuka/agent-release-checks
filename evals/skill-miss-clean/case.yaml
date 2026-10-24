@@ -2,9 +2,10 @@ schema_version: "1.1"
 name: skill-miss-clean
 description: >-
   The same request as skill-miss-leftover, in a project whose code has no
-  debug print left. The skill should add and prove the check, and the reply
-  must not claim a print remains in the project's code.
-expected_outcome: A check listed with bad and good cases, a proof record that the bad case failed, no false report of a leftover print.
+  debug print left. The skill should write and prove the check and give its
+  entry, without writing .claude/invigilator.json around the refusal, and the
+  reply must not claim a print remains in the project's code.
+expected_outcome: A proof record that the bad case failed, the entry given in the reply, .claude/invigilator.json not written around the refusal, no false report of a leftover print.
 tags: [skill, miss-to-check]
 runs: 3
 context:

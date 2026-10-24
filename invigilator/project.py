@@ -30,6 +30,11 @@ change to any of them leaves the check unproven until it is proven again. `check
 runs the cases again instead of trusting the record. CI should use it, since an agent can
 write a record by hand.
 
+`invigilator prove --check FILE` proves checks from another file, such as checks/<name>.json,
+before they are listed. Except in bypass and auto mode, Claude Code asks the user before an
+agent writes in .claude/, so an agent can prove a new check first and the user approves
+listing a check that has already caught its bad case. The same entry, listed unchanged, counts as proven.
+
 A project can add checks, but it can't take one away or change one, as with the hook
 settings in hooks.py:
 
@@ -163,6 +168,17 @@ def project_checks(root):
     if problem:
         raise ConfigError(problem)
     return parse(data.get("checks", []), hooks.CONFIG.as_posix(), "project")
+
+
+def file_checks(path):
+    """[Check] from a file that isn't the project file: one check, a list, or {"checks": [...]}."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as err:
+        raise ConfigError(f"{path} could not be read ({err})") from None
+    if isinstance(data, dict):
+        data = data["checks"] if "checks" in data else [data]
+    return parse(data, str(path), "file")
 
 
 def user_checks(root, environ):
@@ -498,14 +514,39 @@ def prove_project(root, names=(), environ=None, base=None):
     unknown = [name for name in names if name not in known]
     if unknown:
         raise ConfigError(f"there is no check named {unknown[0]!r}")
-    rows, updates, drop, ok = [], {}, [], True
+    rows, ok = [], True
     for finding in work.findings:
         if not names or finding.check in names:
             rows.append([finding.check, "-", "-", f"not proven: {finding.detail}"])
             ok = False
-    for check in work.checks:
-        if names and check.name not in names:
-            continue
+    proved, held = _prove(root, [check for check in work.checks if not names or check.name in names])
+    return rows + proved, work.notes, ok and held
+
+
+def prove_file(root, path, environ=None):
+    """(rows, notes, ok) for the checks in a file other than the project file. Their records
+    are written as for listed checks, so the same entry counts once it is listed. A name the
+    project or your own file already lists with another definition is refused, since the
+    records are kept by name."""
+    root = Path(root).resolve()
+    work = plan(root, environ)
+    listed = {check.name: check for check in work.checks}
+    checks = file_checks(path)
+    for check in checks:
+        same = listed.get(check.name)
+        if same is not None and _definition(same, root) != _definition(check, root):
+            raise ConfigError(f"{path}: a different check named {check.name!r} is already listed. "
+                              f"Give this one another name, or prove the listed one with "
+                              f"invigilator prove {check.name}")
+    rows, ok = _prove(root, checks)
+    return rows, work.notes, ok
+
+
+def _prove(root, checks):
+    """(rows, ok). Writes the records of the checks that held and drops those of the ones that
+    didn't."""
+    rows, updates, drop, ok = [], {}, [], True
+    for check in checks:
         held, runs, problems = prove_one(check, root)
         caught, bad, passed, good = counts(runs)
         rows.append([check.name, f"{caught} of {bad}", f"{passed} of {good}",
@@ -517,4 +558,4 @@ def prove_project(root, names=(), environ=None, base=None):
             ok = False
     if updates or drop:
         write_proofs(root, updates, drop)
-    return rows, work.notes, ok
+    return rows, ok

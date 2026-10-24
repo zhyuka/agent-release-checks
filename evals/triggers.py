@@ -7,6 +7,10 @@ near misses that shouldn't, each marked "train" or "test". A description is tune
 the train queries, so the test queries are a held-out score. Each query runs --runs times
 in a fresh scratch repository, as `claude -p` with this plugin loaded and at most
 --max-turns turns, and counts as fired when the Skill tool was called with the skill's name.
+The runs leave out your own user settings, skills and CLAUDE.md, so the score doesn't depend
+on what else is installed on this machine; --user-settings puts them back. Claude Code's
+built-in skills, such as code-review, still compete. A run that fails before the model
+answers, such as a sign-in that didn't load, is tried once more.
 
 It prints, per skill and split, how many runs fired as they should, and the cost. Every run
 is a paid model call on whatever account `claude` is signed in to. It writes the full
@@ -69,19 +73,24 @@ def fired(stream, skill):
     return any(c.lstrip("/") in names for c in called), called, cost, error
 
 
-def run_one(query, skill, model, max_turns):
-    with tempfile.TemporaryDirectory(prefix="trigger-") as tmp:
-        folder = Path(tmp)
-        scaffold(folder)
-        done = subprocess.run(
-            ["claude", "-p", query, "--plugin-dir", str(ROOT), "--model", model,
-             "--output-format", "stream-json", "--verbose", "--max-turns", str(max_turns),
-             "--strict-mcp-config"],
-            cwd=folder, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
-    hit, called, cost, error = fired(done.stdout, skill)
-    if not done.stdout.strip():
-        error = (done.stderr.strip().splitlines() or [f"exit {done.returncode}"])[-1]
-    return {"fired": hit, "called": called, "cost": cost, "error": error}
+def run_one(query, skill, model, max_turns, user_settings=False):
+    sources = "user,project,local" if user_settings else "project,local"
+    for attempt in range(2):
+        with tempfile.TemporaryDirectory(prefix="trigger-") as tmp:
+            folder = Path(tmp)
+            scaffold(folder)
+            done = subprocess.run(
+                ["claude", "-p", query, "--plugin-dir", str(ROOT), "--model", model,
+                 "--output-format", "stream-json", "--verbose", "--max-turns", str(max_turns),
+                 "--strict-mcp-config", "--setting-sources", sources],
+                cwd=folder, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+        hit, called, cost, error = fired(done.stdout, skill)
+        if not done.stdout.strip():
+            error = (done.stderr.strip().splitlines() or [f"exit {done.returncode}"])[-1]
+        # Nothing was billed, so the model never answered: try once more.
+        if not (error and not cost and not called):
+            break
+    return {"fired": hit, "called": called, "cost": cost, "error": error, "attempts": attempt + 1}
 
 
 def main(argv=None):
@@ -93,6 +102,8 @@ def main(argv=None):
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--max-cost", type=float, default=6.0, help="stop starting runs past this many USD")
     parser.add_argument("--out", default=str(Path(tempfile.gettempdir()) / "invigilator-triggers.json"))
+    parser.add_argument("--user-settings", action="store_true",
+                        help="load your own user settings, skills and CLAUDE.md too")
     args = parser.parse_args(argv)
     skills = args.skill or sorted(p.stem for p in QUERIES.glob("*.json"))
     queries = {skill: json.loads((QUERIES / f"{skill}.json").read_text(encoding="utf-8")) for skill in skills}
@@ -105,7 +116,7 @@ def main(argv=None):
         with lock:
             if spent[0] >= args.max_cost:
                 return None
-        outcome = run_one(item["query"], skill, args.model, args.max_turns)
+        outcome = run_one(item["query"], skill, args.model, args.max_turns, args.user_settings)
         with lock:
             spent[0] += outcome["cost"]
         return {"skill": skill, "run": number, **item, **outcome}
@@ -117,7 +128,9 @@ def main(argv=None):
     Path(args.out).write_text(json.dumps({"model": args.model, "runs": args.runs, "results": results}, indent=2),
                               encoding="utf-8")
     print(f"Trigger tests: {args.model}, {args.runs} runs per query, at most {args.max_turns} turns, "
-          f"${spent[0]:.2f}, {len(results)} of {len(jobs)} runs done")
+          f"${spent[0]:.2f}, {len(results)} of {len(jobs)} runs done, "
+          f"{'with' if args.user_settings else 'without'} your user settings, "
+          f"{sum(r['attempts'] > 1 for r in results)} tried twice")
     print("  A run that ended on an error counts only under errors.")
     print("  skill          split  should fire  fired      should not  stayed quiet  errors")
     for skill in skills:

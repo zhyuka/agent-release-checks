@@ -1,5 +1,5 @@
 """invigilator check [--base REF] [--prove] | invigilator prove [NAME ...] [--base REF]
-invigilator check <folder> | invigilator demo
+invigilator prove --check FILE | invigilator check <folder> | invigilator demo
 
 Also runs as python -m invigilator.
 """
@@ -126,24 +126,33 @@ def run_project(root, base, reprove):
     return 1 if failed else 0
 
 
-def run_prove(root, names, base):
+def run_prove(root, names, base, check_file=None):
     """Exit 0 when every check named, or every check, was proven, 1 when one wasn't, 2 on
     unusable input."""
     root = project.find_root(root)
     try:
-        rows, notes, ok = project.prove_project(root, names, base=base)
+        if check_file:
+            rows, notes, ok = project.prove_file(root, check_file)
+        else:
+            rows, notes, ok = project.prove_project(root, names, base=base)
     except project.ConfigError as err:
         print(f"invigilator: {err}.", file=sys.stderr)
         return 2
-    print(f"Proving the checks in {root}" + (f", against {base}" if base else ""))
+    if check_file:
+        print(f"Proving the checks in {check_file}, for {root}")
+    else:
+        print(f"Proving the checks in {root}" + (f", against {base}" if base else ""))
     for note in notes:
         print(f"  {note}.")
     if not rows:
-        print(f"  There are no checks in {project.hooks.CONFIG.as_posix()} to prove.")
+        print(f"  There are no checks in {check_file or project.hooks.CONFIG.as_posix()} to prove.")
         return 1
     table(["check", "bad cases caught", "good cases passed", "result"], rows)
     proven = sum(row[-1] == "proven" for row in rows)
     print(f"  {proven} of {len(rows)} checks proven. Records: {project.PROOFS.as_posix()}.")
+    if check_file and proven:
+        print(f"  A proven entry counts once it is listed in {project.hooks.CONFIG.as_posix()} "
+              "unchanged.")
     if not ok:
         print("  A check that isn't proven doesn't count. Fix the check, not its cases: a bad case "
               "it passes is a defect it would miss.")
@@ -173,6 +182,9 @@ def main(argv=None):
                          "the project has to keep, with their cases unchanged")
     checking.add_argument("--prove", action="store_true", help="run each check's cases again "
                           "instead of trusting its record; use this in CI")
+    proving.add_argument("--check", metavar="FILE", help="prove the checks in FILE, such as "
+                         "checks/<name>.json, before they are listed; the same entry counts once "
+                         "it is listed")
     args = parser.parse_args(argv)
     if args.command == "check" and args.folder:
         if args.base or args.prove or args.project != ".":
@@ -181,5 +193,7 @@ def main(argv=None):
     if args.command == "check":
         return run_project(args.project, args.base, args.prove)
     if args.command == "prove":
-        return run_prove(args.project, args.names, args.base)
+        if args.check and (args.names or args.base):
+            parser.error("--check proves the checks in its file; leave out NAME and --base")
+        return run_prove(args.project, args.names, args.base, args.check)
     return demo()

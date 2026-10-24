@@ -7,7 +7,7 @@ invigilator runs on your machine, inside Claude Code, or as the `invigilator` co
 - The reviewer hook reads the tool call Claude Code is about to make, such as the file an Edit changes or the command a Bash call runs, the project's `.claude/invigilator.json`, and your own `invigilator.json` in your Claude Code config folder, which lists the QA commands you accepted for each project folder.
 - The QA hook reads the session transcript file that Claude Code passes to Stop and SubagentStop hooks. The transcript can hold anything you or the agent typed. The hook reads only the tool calls and, for each result, whether it failed and the start of its text, to decide whether the QA command passed after the last file write. It keeps nothing from them.
 - The line at session start reads the same two files and the plugin options you set with `/plugin configure`.
-- `invigilator check` and `invigilator prove` read the checks listed in those two files, the files each check's command names and each check's cases, and `.claude/invigilator-proofs.json`. With `--base`, they read the project file and the cases at that git ref through `git`.
+- `invigilator check` and `invigilator prove` read the checks listed in those two files, the files each check's command names and each check's cases, and `.claude/invigilator-proofs.json`. `prove --check FILE` also reads the checks in that file. With `--base`, they read the project file and the cases at that git ref through `git`.
 
 ## What it writes
 

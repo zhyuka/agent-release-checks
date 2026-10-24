@@ -149,6 +149,61 @@ class ProveTest(ProjectTest):
             return main([*args, "--project", str(EXAMPLE)]), out.getvalue()
 
 
+class ProveFirstTest(ProjectTest):
+    """prove --check: Claude Code asks the user before an agent writes in .claude/, so an agent
+    proves a new check from its own file and the user lists a check that is already proven."""
+
+    def entry_file(self, data):
+        path = self.root / "checks" / "candidate.json"
+        path.write_text(json.dumps(data))
+        return str(path)
+
+    def test_a_check_proven_from_its_own_file_counts_once_listed_unchanged(self):
+        self.configure()
+        for data in (NO_PRINT, {"checks": [NO_PRINT]}, [NO_PRINT]):
+            code, out, _ = self.cli("prove", "--check", self.entry_file(data))
+            self.assertEqual(code, 0, out)
+            self.assertIn("1 of 1            1 of 1             proven", out)
+            self.assertIn("counts once it is listed", out)
+        self.assertEqual(self.statuses(), {}, "a check that isn't listed doesn't run")
+        self.configure(NO_PRINT)
+        self.assertEqual(self.statuses(), {"no-print": "pass"})
+
+    def test_a_listing_that_differs_from_the_proven_entry_is_unproven(self):
+        self.configure()
+        self.assertEqual(self.cli("prove", "--check", self.entry_file(NO_PRINT))[0], 0)
+        self.configure({**NO_PRINT, "target": "."})
+        self.assertIn("the check changed since it was proven", self.details()["no-print"])
+
+    def test_a_check_that_never_objects_is_not_proven_from_its_file_either(self):
+        self.configure()
+        code, out, _ = self.cli("prove", "--check", self.entry_file({**NEVER_OBJECTS, "name": "never"}))
+        self.assertEqual(code, 1)
+        self.assertIn("it passed the bad case checks/cases/no-print/bad", out)
+        self.assertEqual(project.read_proofs(self.root), {})
+
+    def test_a_file_cannot_reuse_a_listed_checks_name_for_another_check(self):
+        # Records are kept by name, so a different check under a listed name would replace its record.
+        self.assertTrue(self.prove()[2])
+        before = project.read_proofs(self.root)
+        code, _, err = self.cli("prove", "--check", self.entry_file(NEVER_OBJECTS))
+        self.assertEqual(code, 2)
+        self.assertIn("a different check named 'no-print' is already listed", err)
+        self.assertEqual(project.read_proofs(self.root), before)
+        self.assertEqual(self.statuses(), {"no-print": "pass"})
+        self.assertEqual(self.cli("prove", "--check", self.entry_file(NO_PRINT))[0], 0, "the same entry is fine")
+
+    def test_a_broken_file_is_exit_2_and_check_does_not_mix_with_names(self):
+        path = self.root / "checks" / "candidate.json"
+        path.write_text("{not json")
+        code, _, err = self.cli("prove", "--check", str(path))
+        self.assertEqual(code, 2)
+        self.assertIn("could not be read", err)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
+            main(["prove", "no-print", "--check", str(path)])
+        self.assertEqual(stop.exception.code, 2)
+
+
 class ConfigTest(ProjectTest):
     def test_a_project_with_no_checks_does_not_pass(self):
         self.configure()

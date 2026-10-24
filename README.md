@@ -144,6 +144,8 @@ Checks for /home/sam/invigilator/examples/project
 
 `invigilator prove` runs each check on its cases. A check is proven when it exits non-zero on every bad case and 0 on every good one. A case where the command didn't start or timed out proves nothing. A check that passes its bad case would miss the defect, and one that fails its good case is a false alarm, so neither is proven. The record goes in `.claude/invigilator-proofs.json`, which you commit with the check.
 
+`invigilator prove --check checks/<name>.json` proves a check before it's listed, from a file that holds its entry. Except in bypass and auto mode, Claude Code asks you before an agent writes in `.claude/`, and refuses the write in a session that can't ask. So `/invigilator:miss-to-check` proves the new check this way first and then asks you to list it. The same entry, listed unchanged, counts as proven. `--check` refuses a name the project already lists for a different check, since records are kept by name.
+
 `invigilator check` runs every check on its target and prints one row each. Only `pass` passes:
 
 - `fail`: the check ran and found a problem. Its last 20 lines of output follow the table.
@@ -182,7 +184,7 @@ A skill runs when you type its name, or when the agent decides the task calls fo
 
 - `/invigilator:check [folder]` runs `invigilator check` and reports the table as printed, with every result that isn't a pass.
 - `/invigilator:review [what to review]` collects what the change is meant to do, in your words, and the change itself, and leaves out the agent's own account of it. It starts `invigilator:reviewer`, a subagent that can't edit files. The reviewer hook covers it, since its name matches `*reviewer*`, and its tool list has no file-writing tool. In a tool without subagents, the skill writes the reviewer's prompt for you to paste into a new chat, so the review still comes from a fresh context.
-- `/invigilator:miss-to-check [what was missed]` turns a defect that got through into a check: a bad case with the defect, a good case with the fix, a command that tells them apart, and a passing `invigilator prove`.
+- `/invigilator:miss-to-check [what was missed]` turns a defect that got through into a check: a bad case with the defect, a good case with the fix, a command that tells them apart, and a passing `invigilator prove`. You approve the write that lists the check. If you decline, or the session can't ask, it gives you the entry to add instead.
 - `/invigilator:setup` sets the QA command, the builders and the reviewers, as in [Configure it](#configure-it).
 
 ## Turn it off
@@ -391,7 +393,7 @@ A check counts only after it catches a planted bad case and passes a known-good 
 - `tests/test_readonly.py` lists shell commands that write files and commands that don't. The classifier has to catch every one of the first and pass every one of the second.
 - These tests feed recorded inputs to the scripts and don't start Claude Code. `evals/` runs with and without the plugin through `claude plugin eval`, and `.github/workflows/live.yml` runs it in CI when the `ANTHROPIC_API_KEY` secret is set.
 - A skill ships only if it beats the same frontmatter with a one-line body, or ties it at lower cost. `evals/shipping_rule.py` runs the cases tagged `skill` on the plugin and on a copy whose skill bodies are one line, and prints both. The review and miss-to-check skills each have a case with a planted defect and one without.
-- `evals/triggers.py` runs about 20 queries per skill, half that should fire it and half near misses that shouldn't, 3 times each. The queries are split into train and test, and a description is tuned only on the train half.
+- `evals/triggers.py` runs about 20 queries per skill, half that should fire it and half near misses that shouldn't, 3 times each. The queries are split into train and test, and a description is tuned only on the train half. The runs leave out your own user settings, skills and CLAUDE.md, so the score doesn't depend on what else you have installed. Claude Code's built-in skills, such as code-review, still compete.
 
 ## License
 

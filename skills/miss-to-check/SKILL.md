@@ -14,34 +14,32 @@ A miss is a defect the project's checks let through. Turn it into a check that f
 
 3. Write the check: a command that exits non-zero when it finds the defect and 0 when it doesn't, and takes the path to inspect as an argument. Prefer a rule in a tool the project already runs, such as a linter rule or a test, over a new script. If it finds nothing to inspect, it should fail, not pass.
 
-4. Add it to `checks` in `.claude/invigilator.json`, keeping the file's other fields:
+4. Write the check's entry to `checks/<name>.json`:
 
    ```json
    {
-     "checks": [
-       {
-         "name": "<name>",
-         "run": "{python} checks/<name>.py {target}",
-         "target": "src",
-         "bad": "checks/cases/<name>/bad",
-         "good": "checks/cases/<name>/good"
-       }
-     ]
+     "name": "<name>",
+     "run": "{python} checks/<name>.py {target}",
+     "target": "src",
+     "bad": "checks/cases/<name>/bad",
+     "good": "checks/cases/<name>/good"
    }
    ```
 
-   `{target}` becomes the path to inspect, and `{python}` the Python that runs invigilator. The command runs from the project root without a shell. Claude Code asks the user before this write, which is expected.
+   `{target}` becomes the path to inspect, and `{python}` the Python that runs invigilator. The command runs from the project root without a shell.
 
-5. Prove it:
+5. Prove it from that file:
 
    ```
-   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m invigilator prove <name>
+   PYTHONPATH="${CLAUDE_PLUGIN_ROOT}" python3 -m invigilator prove --check checks/<name>.json
    ```
 
    It has to report every bad case caught and every good case passed. If it doesn't, fix the check, not the cases: a bad case it passes is the defect it would miss, and a good case it fails is a false alarm. Use `invigilator prove` if it's installed as a command; on Windows use `python` or `py -3`.
 
-6. Run the new check on the project with `invigilator check` (same prefix). If it fails there, the defect is still in the code: say where, and don't loosen the check to get a pass.
+6. Run the check's command on the project, with `{target}` set to its target, for example `python3 checks/<name>.py src`. If it fails there, the defect is still in the code: say where, and don't loosen the check to get a pass. Fixing it is a separate change, so ask first.
 
-7. Report the check's name and command, the prove table as printed, and the result on the project.
+7. List it: add the whole entry from `checks/<name>.json`, every field, as an object in the `checks` list of `.claude/invigilator.json`, keeping the file's other fields. The list holds the entries themselves, not file names or check names. This write is the user's to approve. If it's refused, or you can't ask, don't write the file another way, even if the refusal suggests trying another tool: no shell command, script or other tool. Show the user the file as it should read, with the whole entry in `checks`, and say the check is already proven, so it counts once it's listed unchanged.
+
+8. Report the check's name and command, the prove table as printed, the result on the project, and whether the check is listed or the entry the user still has to add.
 
 If no command can tell the defect apart from the fix, for example because it takes a person's judgment, stop and say so. Don't add a check that passes everything.
