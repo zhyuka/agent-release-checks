@@ -1,8 +1,8 @@
 {
   "name": "invigilator",
   "displayName": "Invigilator",
-  "version": "0.3.6",
-  "description": "Hooks that keep reviewer agents read-only, and keep a builder from stopping until it runs its QA command after its last edit. If QA fails, it is sent back once, then you're told.",
+  "version": "0.4.0",
+  "description": "Checks an agent can't pass for itself. Reviewer agents can't write files, a builder can't stop until its QA command passes after its last edit, and a project's own checks run from a skill, a git hook or CI, each counting only once it has failed a planted bad case and passed a good one.",
   "author": {
     "name": "Derek Zhou",
     "url": "https://github.com/zhyuka"
@@ -13,7 +13,7 @@
   "supportUrl": "https://github.com/zhyuka/invigilator/issues",
   "privacyPolicyUrl": "https://github.com/zhyuka/invigilator/blob/main/PRIVACY.md",
   "license": "MIT",
-  "keywords": ["hooks", "code-review", "qa", "release", "subagents", "claude-code-hooks", "reviewer", "stop-hook", "verification"],
+  "keywords": ["hooks", "code-review", "qa", "release", "subagents", "claude-code-hooks", "reviewer", "stop-hook", "verification", "ci", "checks"],
   "userConfig": {
     "reviewer_agents": {
       "type": "string",

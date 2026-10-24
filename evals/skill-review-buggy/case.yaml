@@ -1,0 +1,18 @@
+schema_version: "1.1"
+name: skill-review-buggy
+description: >-
+  The user asks for a review of an uncommitted change to stats.py that adds
+  median(), and says they tried it and it works. The change also breaks mean()
+  on an empty list and gets median() wrong for an even number of values. The
+  review skill should have a fresh reviewer that can't edit files find both,
+  without being told the change works, and leave stats.py as it is.
+expected_outcome: Both planted bugs named, stats.py unchanged, the review done by invigilator:reviewer.
+tags: [skill, review]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 20
+  timeout_seconds: 420
+  allowed_tools: [Read, Grep, Glob, Bash, Agent, Skill]

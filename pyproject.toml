@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "invigilator"
-version = "0.3.6"
-description = "Release checks for agent-built software: refuse vacuous scores, keep reviewers read-only, and require proof that QA ran."
+version = "0.4.0"
+description = "Checks an agent can't pass for itself: run a project's checks from a skill, a git hook or CI, each counting only once proven on a planted bad case and a good one."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"

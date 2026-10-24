@@ -2,6 +2,29 @@
 
 Each version here matches `version` in `.claude-plugin/plugin.json`, the marketplace entry in `.claude-plugin/marketplace.json`, and `pyproject.toml`. Claude Code installs an update only when that number changes.
 
+## 0.4.0
+
+### Added
+
+- `invigilator check` with no folder runs the checks a project lists under `checks` in `.claude/invigilator.json`. A check is a command that names `{target}`, with at least one planted bad case it has to fail and one good case it has to pass. It runs from the project root without a shell.
+- `invigilator prove` runs each check on its cases and records the result in `.claude/invigilator-proofs.json`. A check counts only with a record that it failed every bad case and passed every good one, so `invigilator check` reports a check without one as `unproven`. A change to the check, a case or a file its command names leaves it unproven until it is proven again.
+- `invigilator check --prove` runs the cases again instead of trusting the record, since anyone can write a record by hand. The CI templates use it.
+- A project can add checks but can't remove one or change its proof, as with the hook settings in 0.3.6. Checks in your own `invigilator.json` always run, and a project check with the same name is left out. With `--base REF`, every check the project had at that ref has to stay, with its cases unchanged; leaving one out comes out `removed`.
+- CI templates for GitHub Actions and Azure Pipelines, and a git pre-push hook, in `ci/`. The README says where a check can't be skipped. Through a skill, the agent decides whether to call it. CI on a protected branch runs it on every change.
+- When a check fails, the output tells the agent what to do if it can't pass. It should stop and say it's blocked, and not edit the check, its cases or the config to get a pass.
+- `/invigilator:review` has a change reviewed by `invigilator:reviewer`, a new subagent that can't edit files, given only the request and the change. Without subagents, it writes the prompt to paste into a new chat.
+- `/invigilator:miss-to-check` turns a defect that got through into a check, proven both ways.
+- An Agent Plugins 1.0 `plugin.json` at the repo root, for VS Code, GitHub Copilot, Cursor and Codex. They load the skills from it.
+- `invigilator --version`.
+
+### Changed
+
+- `/invigilator:check` runs the project's checks when given no folder.
+- The hooks ask you before any agent edits `.claude/invigilator-proofs.json`.
+- Your own `invigilator.json` can hold `checks` for a project as well as `qa_commands`. An entry with only `checks` leaves the QA check off for that project.
+- The README says that invigilator has one maintainer.
+- The README's account of where the checks come from no longer names an employer or quotes counts from that employer's internal runs.
+
 ## 0.3.6
 
 ### Changed

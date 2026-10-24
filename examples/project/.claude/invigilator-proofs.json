@@ -1,0 +1,22 @@
+{
+  "proofs": {
+    "no-print": {
+      "check": "a7317e5d5481f2996d7623b96ca43e2bc03ea09d18d94619e59384c6943a5fff",
+      "cases": [
+        {
+          "path": "checks/cases/no-print/bad",
+          "must": "fail",
+          "sha256": "41bd5b7de6bc14f9d77d6012d4654be0685cfb4c0f876b6b05dc974e9ac48e8f",
+          "exit": 1
+        },
+        {
+          "path": "checks/cases/no-print/good",
+          "must": "pass",
+          "sha256": "8f2763f12fd071141793bbe597eed9a62895e144168fa6166b8859b3300f4d84",
+          "exit": 0
+        }
+      ],
+      "proven_with": "invigilator 0.4.0"
+    }
+  }
+}

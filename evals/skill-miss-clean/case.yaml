@@ -1,0 +1,16 @@
+schema_version: "1.1"
+name: skill-miss-clean
+description: >-
+  The same request as skill-miss-leftover, in a project whose code has no
+  debug print left. The skill should add and prove the check, and the reply
+  must not claim a print remains in the project's code.
+expected_outcome: A check listed with bad and good cases, a proof record that the bad case failed, no false report of a leftover print.
+tags: [skill, miss-to-check]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Read, Grep, Glob, Bash, Edit, Write, Skill]

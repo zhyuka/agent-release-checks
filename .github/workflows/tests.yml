@@ -52,6 +52,16 @@ jobs:
           if invigilator check examples/runs/cheap-builder; then exit 1; fi
           if invigilator check examples/runs/reviewer-wrote; then exit 1; fi
 
+      # The example project's check, proven again from its cases, passes on its code and
+      # fails once its planted bad case is copied over that code.
+      - name: Check the example project
+        run: |
+          invigilator check --prove --project examples/project
+          planted="$RUNNER_TEMP/planted project"
+          cp -R examples/project "$planted"
+          cp examples/project/checks/cases/no-print/bad/app.py "$planted/src/app.py"
+          if invigilator check --project "$planted"; then exit 1; fi
+
       # The same hook command typed into a real bash and a real pwsh, from a path
       # with spaces, as a reader of this log would run it.
       - name: A reviewer's write is denied (bash)
@@ -97,9 +107,10 @@ jobs:
           claude plugin validate --strict .
           # Before Claude Code 2.1.289, validating the repo root checks only the
           # marketplace. A copy without marketplace.json checks the plugin's
-          # manifest, hooks and skills on any version.
+          # manifest, hooks, skills and agents on any version, with the Agent
+          # Plugins manifest beside them.
           plugin="$RUNNER_TEMP/plugin"
           mkdir -p "$plugin"
-          cp -R .claude-plugin hooks skills README.md "$plugin/"
+          cp -R .claude-plugin hooks skills agents plugin.json README.md "$plugin/"
           rm "$plugin/.claude-plugin/marketplace.json"
           claude plugin validate --strict "$plugin"

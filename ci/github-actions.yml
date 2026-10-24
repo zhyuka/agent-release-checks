@@ -1,0 +1,45 @@
+# Runs the project's invigilator checks on every pull request and every push to main.
+#
+# Copy this file to .github/workflows/invigilator.yml. Then, in the repository's settings,
+# protect main: require pull requests, require the "invigilator" check to pass, and require
+# a code owner's review for this file and for .claude/ (a CODEOWNERS line such as
+# `/.github/workflows/ /.claude/ @your-team`). A pull request runs its own copy of this
+# workflow, so without that review a change could edit the workflow and skip the checks.
+#
+# On a pull request, --base keeps the checks the target branch has: the change can add
+# checks but not remove one or edit its cases. --prove runs each check's planted bad cases
+# and good cases again instead of trusting the stored record.
+
+name: invigilator
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  invigilator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # --base reads the target branch's checks from git
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      # A fixed release from outside the repository, so a change can't edit the checker.
+      # For a pin that can't move, put the release's commit SHA in place of the tag.
+      - name: Install invigilator
+        run: python -m pip install "invigilator @ git+https://github.com/zhyuka/invigilator@v0.4.0"
+      - name: Run the checks
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE" ]; then
+            invigilator check --prove --base "origin/$BASE"
+          else
+            invigilator check --prove
+          fi

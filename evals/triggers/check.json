@@ -1,0 +1,22 @@
+[
+  {"query": "I think the cart fix is finished. Run the project's checks before I merge it.", "should_trigger": true, "split": "train"},
+  {"query": "Is this ready to release? Run invigilator check and tell me what fails.", "should_trigger": true, "split": "train"},
+  {"query": "Before you tell me it's done, run the release checks on the build folder.", "should_trigger": true, "split": "train"},
+  {"query": "Run the checks listed in .claude/invigilator.json and report each result", "should_trigger": true, "split": "train"},
+  {"query": "can you verify the project's checks pass before I open the PR", "should_trigger": true, "split": "train"},
+  {"query": "Check the run folder runs/nightly-42 with the release checks", "should_trigger": true, "split": "train"},
+  {"query": "Write a unit test for the total function in src/cart.py", "should_trigger": false, "split": "train"},
+  {"query": "Why does my GitHub Actions workflow fail on Windows?", "should_trigger": false, "split": "train"},
+  {"query": "Review my uncommitted change and tell me what's wrong with it", "should_trigger": false, "split": "train"},
+  {"query": "Add a check so a debug print can't ship again", "should_trigger": false, "split": "train"},
+  {"query": "Set up invigilator for this project and pick the QA command", "should_trigger": false, "split": "train"},
+  {"query": "Explain what a pre-push git hook is", "should_trigger": false, "split": "train"},
+  {"query": "Done with the refactor, I think. Make sure all our checks pass first.", "should_trigger": true, "split": "test"},
+  {"query": "run invigilator's checks on this repo", "should_trigger": true, "split": "test"},
+  {"query": "Before merging, confirm the checks still pass on this branch", "should_trigger": true, "split": "test"},
+  {"query": "We're about to ship v2. Run the release checks and give me the table.", "should_trigger": true, "split": "test"},
+  {"query": "Check whether port 8080 is free on this machine", "should_trigger": false, "split": "test"},
+  {"query": "Run npm install and then start the dev server", "should_trigger": false, "split": "test"},
+  {"query": "Spell-check the README", "should_trigger": false, "split": "test"},
+  {"query": "What does the --onto flag of git rebase do?", "should_trigger": false, "split": "test"}
+]

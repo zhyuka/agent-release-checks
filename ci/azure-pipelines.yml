@@ -1,0 +1,51 @@
+# Runs the project's invigilator checks.
+#
+# Add this file to the repository, or copy its steps into a pipeline you have, and create a
+# pipeline from it. In Azure Repos, add that pipeline to main's branch policies as a required
+# build validation, and add required reviewers for this file and for .claude/. A pull request
+# builds with its own copy of this file, so without that review a change could edit the
+# pipeline and skip the checks. The pr trigger below is for GitHub and Bitbucket
+# repositories; Azure Repos ignores it and runs the pipeline from the branch policy.
+#
+# In a pull request build, --base keeps the checks the target branch has: the change can add
+# checks but not remove one or edit its cases. --prove runs each check's planted bad cases
+# and good cases again instead of trusting the stored record.
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: ["*"]
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: self
+    fetchDepth: 0 # --base reads the target branch's checks from git
+
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "3.13"
+
+  # A fixed release from outside the repository, so a change can't edit the checker.
+  # For a pin that can't move, put the release's commit SHA in place of the tag.
+  - script: python -m pip install "invigilator @ git+https://github.com/zhyuka/invigilator@v0.4.0"
+    displayName: Install invigilator
+
+  - script: |
+      set -eu
+      target="${SYSTEM_PULLREQUEST_TARGETBRANCH:-}"
+      if [ -n "$target" ]; then
+        base="origin/${target#refs/heads/}"
+        if ! git rev-parse --verify --quiet "$base^{commit}" > /dev/null; then
+          echo "##vso[task.logissue type=error]The checkout has no $base, so the checks it requires can't be read."
+          exit 2
+        fi
+        invigilator check --prove --base "$base"
+      else
+        invigilator check --prove
+      fi
+    displayName: Run the checks

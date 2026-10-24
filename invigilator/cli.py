@@ -1,4 +1,5 @@
-"""invigilator demo | invigilator check <folder>
+"""invigilator check [--base REF] [--prove] | invigilator prove [NAME ...] [--base REF]
+invigilator check <folder> | invigilator demo
 
 Also runs as python -m invigilator.
 """
@@ -6,7 +7,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import calibrate, check, readonly, runlog, step_ran, vacuous
+from . import __version__, calibrate, check, project, readonly, runlog, step_ran, vacuous
 
 BUILDS = Path(__file__).resolve().parent.parent / "examples" / "builds"
 
@@ -100,14 +101,85 @@ def run_check(folder):
     return 1 if failed else 0
 
 
+def run_project(root, base, reprove):
+    """Exit 0 when every check passed, 1 when one didn't or none ran, 2 on unusable input."""
+    root = project.find_root(root)
+    try:
+        results, notes = project.check_project(root, base=base, reprove=reprove)
+    except project.ConfigError as err:
+        print(f"invigilator: {err}.", file=sys.stderr)
+        return 2
+    print(f"Checks for {root}" + (f", against {base}" if base else ""))
+    for note in notes:
+        print(f"  {note}.")
+    if not results:
+        print(f"  There are no checks in {project.hooks.CONFIG.as_posix()}, so nothing passed.")
+        return 1
+    table(["check", "result", "detail"], [(r.check, r.status, r.detail) for r in results])
+    failed = [r for r in results if r.status != "pass"]
+    print(f"  {len(results) - len(failed)} of {len(results)} checks passed.")
+    for r in failed:
+        if r.output:
+            print(f"\n--- {r.check}: the last lines of its output\n{r.output}")
+    if failed:
+        print(f"\n{project.BLOCKED}")
+    return 1 if failed else 0
+
+
+def run_prove(root, names, base):
+    """Exit 0 when every check named, or every check, was proven, 1 when one wasn't, 2 on
+    unusable input."""
+    root = project.find_root(root)
+    try:
+        rows, notes, ok = project.prove_project(root, names, base=base)
+    except project.ConfigError as err:
+        print(f"invigilator: {err}.", file=sys.stderr)
+        return 2
+    print(f"Proving the checks in {root}" + (f", against {base}" if base else ""))
+    for note in notes:
+        print(f"  {note}.")
+    if not rows:
+        print(f"  There are no checks in {project.hooks.CONFIG.as_posix()} to prove.")
+        return 1
+    table(["check", "bad cases caught", "good cases passed", "result"], rows)
+    proven = sum(row[-1] == "proven" for row in rows)
+    print(f"  {proven} of {len(rows)} checks proven. Records: {project.PROOFS.as_posix()}.")
+    if not ok:
+        print("  A check that isn't proven doesn't count. Fix the check, not its cases: a bad case "
+              "it passes is a defect it would miss.")
+    return 0 if ok else 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="invigilator",
-                                     description="Release checks for agent-built software.")
+                                     description="Checks an agent can't pass for itself.")
+    parser.add_argument("--version", action="version", version=f"invigilator {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("demo", help="run the stub-agent demo and calibration")
-    folder = commands.add_parser("check", help="run the checks on a build folder or a run folder")
-    folder.add_argument("folder", help="a build folder, or a run folder with a run.json")
+    checking = commands.add_parser(
+        "check", help="run the project's checks, or the built-in checks on a build or run folder",
+        description="With no folder, run the checks the project lists in .claude/invigilator.json. "
+                    "Each counts only with a proof from invigilator prove. With a folder, run the "
+                    "built-in checks on a build folder or a run folder with a run.json.")
+    checking.add_argument("folder", nargs="?", help="a build folder, or a run folder with a run.json")
+    proving = commands.add_parser(
+        "prove", help="run each check on its planted bad cases and good cases, and record the result",
+        description="A check is proven when it fails every bad case and passes every good one.")
+    proving.add_argument("names", nargs="*", metavar="NAME", help="the checks to prove; all by default")
+    for sub in (checking, proving):
+        sub.add_argument("--project", default=".", help="the project folder; by default the nearest "
+                         "folder up from here with a .claude/invigilator.json")
+        sub.add_argument("--base", metavar="REF", help="a git ref, such as origin/main, whose checks "
+                         "the project has to keep, with their cases unchanged")
+    checking.add_argument("--prove", action="store_true", help="run each check's cases again "
+                          "instead of trusting its record; use this in CI")
     args = parser.parse_args(argv)
-    if args.command == "check":
+    if args.command == "check" and args.folder:
+        if args.base or args.prove or args.project != ".":
+            parser.error("--base, --prove and --project are for a project's checks, not a folder")
         return run_check(args.folder)
+    if args.command == "check":
+        return run_project(args.project, args.base, args.prove)
+    if args.command == "prove":
+        return run_prove(args.project, args.names, args.base)
     return demo()

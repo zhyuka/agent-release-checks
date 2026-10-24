@@ -4,10 +4,14 @@
 
 An exam invigilator watches the room. Here that means reviewers can't touch the answers, and nobody hands in without sitting the test.
 
-Two Claude Code hooks for projects where agents write and review code.
+invigilator does one job. It keeps an agent from passing its own work. It has two Claude Code hooks, a command that runs a project's own checks, and four skills.
 
 - A reviewer can't write files. When an agent your config names as a reviewer calls Edit or Write, or runs a shell command that writes, such as `sed -i`, `rm` or a `>` redirect, the hook denies the call and tells the agent to put the change in its review.
 - A builder can't stop early. If it edited files after its last passing QA command, the stop hook sends it back to run QA, and if QA can't pass, to tell you why. A QA run piped into `tail` or ended with `|| true` doesn't count, because its exit code is hidden.
+- A project's checks count only once proven. `invigilator check` runs the checks a project lists, from a skill, a git hook or CI. `invigilator prove` records that each one failed a planted bad case and passed a good one, and a check without that record doesn't count. A project can add checks but can't remove one or change its cases. See [A project's own checks](#a-projects-own-checks).
+- `/invigilator:review` has the change reviewed by a fresh reviewer that didn't write it and can't edit files. `/invigilator:miss-to-check` turns a defect that got through into a check, proven both ways.
+
+invigilator has one maintainer, Derek Zhou ([@zhyuka](https://github.com/zhyuka)). Nobody else can merge or release.
 
 ![A replay of two recorded eval runs. A reviewer runs sed -i on notes.md, invigilator denies it and then denies the reviewer's Edit, and the reviewer puts the fix in its review. A builder pipes its QA run into tail, the stop hook sends it back, and it runs python3 qa.py on its own, passes and stops.](docs/demo.gif)
 
@@ -34,6 +38,10 @@ Each of these adds the `zhyuka` marketplace and installs the plugin for your use
 
 The hooks need Claude Code 2.1.69 or later, the first version that tells hooks which subagent is acting. They also need Python 3.9 or later as `python3` or `python`, or as `py -3` on Windows. Git Bash is optional on Windows.
 
+### Other agent tools
+
+The repo root also holds an [Agent Plugins](https://agent-plugins.org) 1.0 `plugin.json`, the manifest that VS Code, GitHub Copilot, Cursor and Codex read. Through it they load the four skills. The skills find the plugin's copy of invigilator through `CLAUDE_PLUGIN_ROOT`, which those tools may not set. Install the command there with `pip install git+https://github.com/zhyuka/invigilator`, and the skills run `invigilator` instead. Hooks and agents aren't part of that format. So in those tools the review skill falls back to a new chat, and a check holds only where `invigilator check` runs in a git hook or CI.
+
 ### What happens on first run
 
 1. Hooks load when a session starts. After the install, start a new session or run `/reload-plugins`.
@@ -47,6 +55,7 @@ An install in a session can show the plugin's options with their defaults filled
 1. Keep a reviewer read-only. Ask: "Use the code-reviewer agent to review build/app.js and list what to fix." If the reviewer tries `sed -i` on the file, Claude Code cancels the call and tells it to put the change in its review instead.
 2. Make "done" mean QA passed. Run `/invigilator:setup` and pick the main session as the builder and `npm run check` as the QA command. Then ask: "Fix the failing test in src/cart.js and tell me when it's done." If Claude edits, runs `npm run check | tail -5` and tries to stop, the hook sends it back to run `npm run check` on its own. It can stop once that passes after its last edit.
 3. Check a finished build. In a clone of this repo, run `/invigilator:check examples/runs/cheap-builder`. It prints pass, fail or skip for each check. Here "step ran" fails because `npm run check` never ran, and the command exits 1.
+4. Make a missed bug a check. Ask: "A debug print got into the release in src/cart.py. Make sure that can't get through again." `/invigilator:miss-to-check` writes a check with a bad case that has the print and a good case without it, and `invigilator prove` has to see the check fail the first and pass the second before it counts.
 
 ## Configure it
 
@@ -92,6 +101,90 @@ The hooks tell agents apart by the `agent_type` field that Claude Code puts in e
 
 A project file with bad JSON, an unknown field or a wrong type makes the hooks fall back to the defaults, and every hook answer then carries a warning that names the problem. A mistake in your own file means no QA command counts until you fix it, with the same warning. A bad option value is ignored and named in the line at session start.
 
+## A project's own checks
+
+A check is a command that exits 0 when what it inspects passes and non-zero when it doesn't. The project lists its checks in `.claude/invigilator.json`, with at least one planted bad case the check has to fail and one good case it has to pass:
+
+```json
+{
+  "checks": [
+    {
+      "name": "no-print",
+      "run": "{python} checks/no_print.py {target}",
+      "target": "src",
+      "bad": "checks/cases/no-print/bad",
+      "good": "checks/cases/no-print/good"
+    }
+  ]
+}
+```
+
+- `run` is a command line, split into words as a POSIX shell splits them, or a list of words. It runs from the project root without a shell, so a pipe or a redirect in it is just a word. `{target}` becomes the path the check inspects and has to appear, so `prove` can point the check at its cases. `{python}` becomes the Python that runs invigilator.
+- `target` is the file or folder the check inspects in the project. It defaults to `.`.
+- `bad` and `good` are each a path or a list of paths, to files or folders.
+- `timeout` is in seconds and defaults to 900.
+
+`examples/project/` is a project with this check, its cases and its proof.
+
+### Prove a check, then run it
+
+```
+$ invigilator prove --project examples/project
+Proving the checks in /home/sam/invigilator/examples/project
+  check     bad cases caught  good cases passed  result
+  no-print  1 of 1            1 of 1             proven
+  1 of 1 checks proven. Records: .claude/invigilator-proofs.json.
+
+$ invigilator check --project examples/project
+Checks for /home/sam/invigilator/examples/project
+  check     result  detail
+  no-print  pass    exit 0 on src
+  1 of 1 checks passed.
+```
+
+`invigilator prove` runs each check on its cases. A check is proven when it exits non-zero on every bad case and 0 on every good one. A case where the command didn't start or timed out proves nothing. A check that passes its bad case would miss the defect, and one that fails its good case is a false alarm, so neither is proven. The record goes in `.claude/invigilator-proofs.json`, which you commit with the check.
+
+`invigilator check` runs every check on its target and prints one row each. Only `pass` passes:
+
+- `fail`: the check ran and found a problem. Its last 20 lines of output follow the table.
+- `unproven`: the check has no record, or the check, a case or a file its command names changed since the record was made. Run `invigilator prove` again.
+- `removed`: with `--base`, the change took away a check or one of its cases that the base has.
+- `error`: the command wasn't found, couldn't start or timed out.
+
+The exit code is 0 when every check passed, 1 when one didn't or there are no checks, and 2 when the checks or a git ref can't be read. `--project` names the project folder; by default it is the nearest folder up from where you run it that has a `.claude/invigilator.json`.
+
+A record shows that `prove` ran on these files. An agent could also write one by hand. `invigilator check --prove` runs every check's cases again instead of trusting the record, and fails a check whose record is missing or out of date. CI should use it. In Claude Code, the hooks ask you before any agent edits `.claude/invigilator-proofs.json`, as they do for `.claude/invigilator.json`.
+
+### A project can add checks, never remove one or change its proof
+
+The same rule as the hook settings holds for checks:
+
+- Your own `invigilator.json` can list checks for a project next to its QA commands, as `{"projects": {"~/code/shop": {"checks": [...]}}}`. Those always run. A project check with the same name is left out, and `invigilator check` says so when the two differ.
+- With `--base REF`, every check the project file had at that git ref has to stay, and so does each of its cases, unchanged. A change can add checks and cases. It can rewrite a check's command, but the new command has to be proven on the same cases. Leaving a check out, or dropping or editing one of its cases, comes out `removed`. CI passes the branch the change would merge into, such as `origin/main`.
+
+To remove a check, a maintainer merges the change past the failing job, which a protected branch lets an admin do.
+
+### Where a check can't be skipped
+
+- **Through a skill.** `/invigilator:check` runs `invigilator check` and reports the table. A skill leaves the call to the agent: it decides whether to run it, and it can stop without running it.
+- **In a git hook.** `ci/pre-push` runs `invigilator check --base` before each push. `git push --no-verify` skips it.
+- **In CI on a protected branch.** This is where a check can't be skipped. `ci/github-actions.yml` and `ci/azure-pipelines.yml` install a fixed invigilator release from outside the repository and run `invigilator check --prove --base` on each pull request. A pull request runs its own copy of the workflow, so also require a code owner's or a required reviewer's approval for the workflow file and for `.claude/`, and require the job to pass before merging. The comments at the top of each template say where to set this.
+
+### When a check can't pass
+
+When a check fails, its output ends with a way out. If the check can't pass for a reason outside the change, such as a service the machine can't reach, the agent should stop and say it's blocked. It names the check, gives the output and says why. It doesn't edit the check, its cases, the files it runs or the two `.claude/` files to get a pass. `/invigilator:check` says the same.
+
+That way out matters. In [ImpossibleBench](https://arxiv.org/abs/2510.20270), where a task can only pass by breaking its tests, letting the agent flag the task for a person cut GPT-5's cheating from 54% to 9%. The paper found the effect much smaller for Claude Opus 4.1, so don't count on the message alone. Run the checks in CI too.
+
+## Skills
+
+A skill runs when you type its name, or when the agent decides the task calls for it.
+
+- `/invigilator:check [folder]` runs `invigilator check` and reports the table as printed, with every result that isn't a pass.
+- `/invigilator:review [what to review]` collects what the change is meant to do, in your words, and the change itself, and leaves out the agent's own account of it. It starts `invigilator:reviewer`, a subagent that can't edit files. The reviewer hook covers it, since its name matches `*reviewer*`, and its tool list has no file-writing tool. In a tool without subagents, the skill writes the reviewer's prompt for you to paste into a new chat, so the review still comes from a fresh context.
+- `/invigilator:miss-to-check [what was missed]` turns a defect that got through into a check: a bad case with the defect, a good case with the fix, a command that tells them apart, and a passing `invigilator prove`.
+- `/invigilator:setup` sets the QA command, the builders and the reviewers, as in [Configure it](#configure-it).
+
 ## Turn it off
 
 - In one project, for you: `claude plugin disable invigilator@zhyuka --scope local`. For everyone on the project: `--scope project`.
@@ -116,7 +209,8 @@ A project file with bad JSON, an unknown field or a wrong type makes the hooks f
 - The reviewer hook reads the tool call Claude Code is about to make, the project's `.claude/invigilator.json` and your own `invigilator.json`. It runs before Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell and Agent calls.
 - The QA hook reads the session transcript file that Claude Code passes to Stop and SubagentStop hooks, to find which tool calls ran and whether the QA command passed. It reads only the tool calls and, for each result, whether it failed and the start of its text. It doesn't run the QA command itself.
 - The line at session start reads the same settings. To show only once per project, it writes an empty marker file under the plugin's data folder in `~/.claude/plugins/data/`. The QA hook writes one there when it blocks a stop after QA failed, so it blocks that stop only once, and one when it tells you about a change to a file QA runs. With no data folder from Claude Code, it writes the file in the temp folder. If it can't write the file, it blocks every such stop. Each time it writes one, it deletes its own marker files in that folder that are older than 30 days. When no Python is found, the hooks write an empty marker file in the temp folder so the warning shows once per session.
-- Each hook runs `sh`, or on Windows without Git Bash runs `hooks/run.ps1` in Windows PowerShell, to find Python, and then runs this plugin's scripts with it. To find Python, `hooks/run.sh` also calls `dirname`, `uname`, `sed`, `head` and `printf`, and `xcode-select -p` on macOS. The Python scripts start no other program. Nothing else runs, and nothing leaves the machine.
+- Each hook runs `sh`, or on Windows without Git Bash runs `hooks/run.ps1` in Windows PowerShell, to find Python, and then runs this plugin's scripts with it. To find Python, `hooks/run.sh` also calls `dirname`, `uname`, `sed`, `head` and `printf`, and `xcode-select -p` on macOS. The hook scripts start no other program, and nothing leaves the machine.
+- `invigilator check` and `invigilator prove` run only when you, a skill, a git hook or CI start them. They start the commands the project's checks name, and `git` for `--base`. `prove` writes `.claude/invigilator-proofs.json`. Read a project's checks before you run them, as you would its tests.
 - A hook acts only on the agents your settings name. Every other agent is left alone.
 
 [Privacy](PRIVACY.md) says the same on one page.
@@ -180,15 +274,21 @@ Claude Code keeps the agent working and hands it the reason as its next instruct
 - Plugin options are per user and apply to every project, so the QA commands you accept live in your own `invigilator.json`, keyed by project folder. A clone in a folder no key covers needs the setup skill once.
 - A project's `.claude/invigilator.json` can only add reviewers and builders, which makes the checks stricter. A project's own Claude Code settings can do more: they can turn any plugin off. Read them in a repo you don't trust.
 - The build scorer reads static HTML, CSS and JS only. Any other build comes out UNSCORABLE.
+- A proof is only as good as its cases. A bad case that doesn't hold the real defect proves a check that would miss it. `--base` keeps a change from dropping or editing the cases the base has, but it can't judge a new case.
+- Without `--prove`, `invigilator check` trusts the stored record, which an agent could write by hand. In Claude Code the hooks ask you first when an agent edits it with a file tool or a shell command that names it, but not when code the hooks can't read writes it.
+- A check's fingerprint covers the files its command names, such as `checks/no_print.py`, but not what those files import or call. A change to a module the script imports doesn't make the check unproven.
+- `--base` reads the base from the local git history. In CI, the checkout needs that history: `fetch-depth: 0` in GitHub Actions, `fetchDepth: 0` in Azure Pipelines. The templates set it.
+- A check's command runs without a shell. For a pipe or a redirect, put it in a script and name the script.
 
 ## Use the checks without Claude Code
 
 ```
 pip install git+https://github.com/zhyuka/invigilator
+invigilator check
 invigilator check path/to/folder
 ```
 
-The folder is a build folder or a run folder. A run folder holds a `run.json` that records one agent run, and can hold an `artifacts/qa_report.json` in the format `invigilator/step_ran.py` writes:
+With no folder, `invigilator check` runs the project's own checks, as in [A project's own checks](#a-projects-own-checks). With a folder, it runs three built-in checks on it. The folder is a build folder or a run folder. A run folder holds a `run.json` that records one agent run, and can hold an `artifacts/qa_report.json` in the format `invigilator/step_ran.py` writes:
 
 ```json
 {
@@ -226,13 +326,13 @@ Release checks for examples/runs/cheap-builder
 
 ## Where this comes from
 
-In my work at Accenture, coding agents built web pages behind automated quality gates. A reviewer agent had to stay read-only. A builder agent had to run its QA step before it said it was done. A person approved every release. Each check here comes from a way that model failed:
+It started with coding agents that built web pages behind automated quality gates. A reviewer agent had to stay read-only. A builder agent had to run its QA step before it said it was done. A person approved every release. Each check here comes from a way those agents failed:
 
 - A rule-based scorer ranked an empty build above real ones, because most of its rules only look for problems.
-- 3 of 91 reviewer-agent runs that were told to be read-only edited code anyway.
-- A cheaper model skipped the QA step in all 33 benchmark runs and reported success anyway.
+- Reviewer agents told to stay read-only sometimes edited code anyway.
+- A cheaper model skipped the QA step and reported success anyway.
 
-The original system is internal and none of it is in this repo. This is a fresh reimplementation of its release checks, and the plugin is new. The two counts above, 3 of 91 and 33 of 33, come from the original runs.
+That system isn't public, and none of it is in this repo. This is a fresh reimplementation of its release checks, and the plugin is new.
 
 ## The three failures, as a demo
 
@@ -242,7 +342,7 @@ cd invigilator
 python -m invigilator demo
 ```
 
-The demo runs each check with stub agents: small deterministic Python functions that stand in for a model, with no LLM calls and no network. It reads the example builds in the clone, and exits non-zero if any check fails calibration. Every number it prints comes from the stubs and the four example builds. It runs 91 and 33 times to match the original runs, and its 2 of 91 comes from a seeded edit rate, not from a model.
+The demo runs each check with stub agents: small deterministic Python functions that stand in for a model, with no LLM calls and no network. It reads the example builds in the clone, and exits non-zero if any check fails calibration. Every number it prints comes from the stubs and the four example builds. Its 2 of 91 comes from a seeded edit rate, not from a model.
 
 1. **An empty build passes most rules.** `invigilator/vacuous.py` scores a static web build against eight rules, such as hex colors, image alt text and heading order. Seven of them only look for problems, so the empty build passes them and scores 0.88, above the mediocre build at 0.62 and the broken one at 0.25. `guarded_score()` refuses to score a build with no visible HTML text, and says why.
 2. **A read-only reviewer edits code.** `invigilator/readonly.py` runs a stub reviewer on fresh copies of a workspace and hashes every file before and after. Its prompt says not to write, and in a small seeded share of runs it writes anyway. Giving the same reviewer a tool layer whose write raises an error stops it. An instruction is not a permission, and the plugin's PreToolUse hook applies the same idea in Claude Code.
@@ -285,10 +385,13 @@ A check counts only after it catches a planted bad case and passes a known-good 
 
 - `invigilator/calibrate.py` plants one bad case and one good case for each demo check, and demo part 4 prints the result. The tests show that a check which never objects, or always objects, fails calibration.
 - `tests/test_check.py` calibrates `invigilator check` on the four runs in `examples/runs/`. CI also runs the command on them, and fails if a good run doesn't pass or a bad run doesn't fail.
+- `tests/test_project.py` holds `invigilator prove` to the same rule. It fails a check that never objects and one that always does, and proves the example's. It also covers the add-never-remove rule, with your own checks and with `--base` on real git history. CI runs `invigilator check --prove` on `examples/project/`, and fails if a copy with the planted bad case passes.
 - Each hook fixture's name starts with the answer it should get, such as deny, block or allow. `tests/test_hooks.py` pipes every fixture through its hook script, and fails unless each hook both blocks and allows something across the set.
 - `tests/test_launcher.py` runs every command in `hooks/hooks.json` on every fixture, from a plugin folder with spaces in its path, in each shell it finds: sh, dash and bash, Git Bash, pwsh and Windows PowerShell. It also checks that a Store alias or an old Python is skipped, and that with no Python the call goes through with one warning per session. CI runs it on Ubuntu, macOS and Windows.
 - `tests/test_readonly.py` lists shell commands that write files and commands that don't. The classifier has to catch every one of the first and pass every one of the second.
 - These tests feed recorded inputs to the scripts and don't start Claude Code. `evals/` runs with and without the plugin through `claude plugin eval`, and `.github/workflows/live.yml` runs it in CI when the `ANTHROPIC_API_KEY` secret is set.
+- A skill ships only if it beats the same frontmatter with a one-line body, or ties it at lower cost. `evals/shipping_rule.py` runs the cases tagged `skill` on the plugin and on a copy whose skill bodies are one line, and prints both. The review and miss-to-check skills each have a case with a planted defect and one without.
+- `evals/triggers.py` runs about 20 queries per skill, half that should fire it and half near misses that shouldn't, 3 times each. The queries are split into train and test, and a description is tuned only on the train half.
 
 ## License
 

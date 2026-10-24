@@ -1,0 +1,19 @@
+schema_version: "1.1"
+name: skill-miss-leftover
+description: >-
+  A debug print in src/cart.py shipped, and a later commit removed it. The
+  user asks that a debug print can't get through again. The skill should add
+  a check to .claude/invigilator.json with a bad case and a good case, and
+  prove it with invigilator prove, so the record shows the bad case failed.
+  src/report.py still has a debug print, so running the new check on the
+  project fails, and the reply should say so.
+expected_outcome: A check listed with bad and good cases, a proof record that the bad case failed, the leftover print in src/report.py reported.
+tags: [skill, miss-to-check]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  model: claude-haiku-4-5
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Read, Grep, Glob, Bash, Edit, Write, Skill]

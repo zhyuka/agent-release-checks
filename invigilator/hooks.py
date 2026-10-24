@@ -62,8 +62,13 @@ from pathlib import Path
 from . import readonly, runlog, step_ran
 
 CONFIG = Path(".claude") / "invigilator.json"
+PROOFS = Path(".claude") / "invigilator-proofs.json"  # project.py writes it; see there
 DEFAULTS = {"reviewer_agents": ["*reviewer*"], "reviewer_shell": "block-writes",
             "builder_agents": ["*builder*"], "qa_commands": []}
+# The project file can also list the project's checks, which project.py reads. The hooks
+# only make sure the field is a list.
+PROJECT_FIELDS = (*DEFAULTS, "checks")
+USER_FIELDS = ("qa_commands", "checks")
 SHELL_MODES = ("block-writes", "block-all")
 OPTION = "CLAUDE_PLUGIN_OPTION_"
 LIST_OPTIONS = ("reviewer_agents", "builder_agents")
@@ -118,12 +123,14 @@ def project_file(project_dir):
         return {}, f"{path} could not be read ({err})"
     if not isinstance(data, dict):
         return {}, f"{path} must hold a JSON object"
-    unknown = sorted(set(data) - set(DEFAULTS))
+    unknown = sorted(set(data) - set(PROJECT_FIELDS))
     if unknown:
         return {}, f"{path} has an unknown field {unknown[0]!r}"
     for key in ("reviewer_agents", "builder_agents", "qa_commands"):
         if not _strings(data.get(key, [])):
             return {}, f"{path}: {key!r} must be a list of strings"
+    if not isinstance(data.get("checks", []), list):
+        return {}, f"{path}: \"checks\" must be a list"
     if data.get("reviewer_shell", SHELL_MODES[0]) not in SHELL_MODES:
         return {}, f"{path}: \"reviewer_shell\" must be \"block-writes\" or \"block-all\""
     return data, ""
@@ -163,29 +170,40 @@ def _inside(path, folder):
 
 
 def accepted_qa_commands(project_dir, environ):
-    """(the QA commands the user accepted for this project, or None when no entry covers it,
-    the user's config file, problem)."""
+    """(the QA commands the user accepted for this project, or None when no entry covers it
+    or the entry lists none, the user's config file, problem)."""
+    entry, path, problem, broken = user_entry(project_dir, environ)
+    if broken:
+        return None, path, f"{problem}, so no QA command counts"
+    return (entry or {}).get("qa_commands"), path, problem
+
+
+def user_entry(project_dir, environ):
+    """(the user's entry for this project, or None when no entry covers it, the user's config
+    file, problem, broken). An entry holds qa_commands, checks or both. broken is True when
+    the file is there but can't be used, so nothing in it counts."""
     path, problem = user_config_path(project_dir, environ)
     if path is None or not path.is_file():
-        return None, path, problem
+        return None, path, problem, False
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
-        return None, path, f"{path} could not be read ({err}), so no QA command counts"
+        return None, path, f"{path} could not be read ({err})", True
     projects = data.get("projects") if isinstance(data, dict) else None
     if not isinstance(projects, dict) or set(data) != {"projects"}:
-        return None, path, f'{path} must hold {{"projects": {{...}}}} and nothing else, so no QA command counts'
+        return None, path, f'{path} must hold {{"projects": {{...}}}} and nothing else', True
     names = {_comparable(os.path.abspath(project_dir)), _comparable(os.path.realpath(project_dir))}
     best = None
     for key, entry in projects.items():
-        if not isinstance(entry, dict) or set(entry) != {"qa_commands"} or not _strings(entry["qa_commands"]):
+        if not isinstance(entry, dict) or not entry or set(entry) - set(USER_FIELDS) \
+                or not _strings(entry.get("qa_commands", [])) or not isinstance(entry.get("checks", []), list):
             return None, path, (f'{path}: the entry for {key!r} must be {{"qa_commands": [...]}}, '
-                                "so no QA command counts")
+                                'and can also hold "checks": [...]'), True
         pattern = _comparable(os.path.expanduser(key)).rstrip("/") or "/"
         if any(fnmatch.fnmatchcase(n, pattern) or fnmatch.fnmatchcase(n, pattern + "/*") for n in names) \
                 and (best is None or len(key) > len(best[0])):
-            best = (key, entry["qa_commands"])
-    return (best[1] if best else None), path, ""
+            best = (key, entry)
+    return (best[1] if best else None), path, "", False
 
 
 def _comparable(path):
@@ -218,16 +236,24 @@ def reviewer_readonly(event, config):
 
 
 def _ask_before_config_change(event):
-    """Any agent that writes the project's config, or the user's own, could change the checks,
-    so the user decides."""
+    """Any agent that writes the project's config, its proof records or the user's own config
+    could change the checks, so the user decides."""
     tool, tool_input = event.get("tool_name", ""), event.get("tool_input") or {}
     project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "."
     cwd = event.get("cwd") or project
     path = os.path.join(os.path.abspath(project), str(CONFIG))
     reason = readonly.touch_check(tool, tool_input, path, cwd)
+    proofs = "" if reason else readonly.touch_check(
+        tool, tool_input, os.path.join(os.path.abspath(project), str(PROOFS)), cwd)
     if reason:
-        what = (f"{CONFIG.as_posix()}. That file sets who counts as a reviewer or a builder and "
-                "proposes the project's QA commands, so changing it changes the release checks")
+        what = (f"{CONFIG.as_posix()}. That file sets who counts as a reviewer or a builder, "
+                "proposes the project's QA commands and lists its checks, so changing it changes "
+                "the release checks")
+    elif proofs:
+        reason = proofs
+        what = (f"{PROOFS.as_posix()}. That file records that each check failed its planted bad "
+                "cases and passed its good ones. invigilator prove writes it, and a change by hand "
+                "could make an unproven check count")
     else:
         user_file = user_config_path(project, os.environ)[0]
         reason = user_file and readonly.touch_check(tool, tool_input, str(user_file), cwd)

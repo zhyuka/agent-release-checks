@@ -4,3 +4,6 @@ __pycache__/
 /build/
 /dist/
 .venv/
+# The plugin directory can't scan a plugin that holds a system file.
+.DS_Store
+Thumbs.db

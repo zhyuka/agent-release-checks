@@ -1,0 +1,22 @@
+[
+  {"query": "Review my uncommitted change before I commit it", "should_trigger": true, "split": "train"},
+  {"query": "Get a second opinion on the diff in src/cart.py", "should_trigger": true, "split": "train"},
+  {"query": "Can someone other than you review the last commit?", "should_trigger": true, "split": "train"},
+  {"query": "Have a fresh reviewer look over this branch's changes", "should_trigger": true, "split": "train"},
+  {"query": "I want an independent review of what you just wrote", "should_trigger": true, "split": "train"},
+  {"query": "Review the staged changes and list any bugs", "should_trigger": true, "split": "train"},
+  {"query": "Fix the division by zero in mean() when the list is empty", "should_trigger": false, "split": "train"},
+  {"query": "Run the project's checks and tell me if they pass", "should_trigger": false, "split": "train"},
+  {"query": "Write a review of the novel Dune for my blog", "should_trigger": false, "split": "train"},
+  {"query": "Summarize what changed in the last release", "should_trigger": false, "split": "train"},
+  {"query": "Turn the bug we missed last week into a check", "should_trigger": false, "split": "train"},
+  {"query": "Rename prices to amounts in src/cart.py", "should_trigger": false, "split": "train"},
+  {"query": "Before we call this done, get the change reviewed", "should_trigger": true, "split": "test"},
+  {"query": "Do a code review of the last three commits", "should_trigger": true, "split": "test"},
+  {"query": "Look over my change with fresh eyes and tell me what's broken", "should_trigger": true, "split": "test"},
+  {"query": "review this branch's diff for defects", "should_trigger": true, "split": "test"},
+  {"query": "Read the Python docs for asyncio and explain TaskGroup", "should_trigger": false, "split": "test"},
+  {"query": "Write a commit message for my uncommitted change", "should_trigger": false, "split": "test"},
+  {"query": "Explain how pull request reviews work on GitHub", "should_trigger": false, "split": "test"},
+  {"query": "Draft a reply to a 2-star review of our app", "should_trigger": false, "split": "test"}
+]

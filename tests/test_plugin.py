@@ -8,6 +8,7 @@ import shlex
 import unittest
 from pathlib import Path
 
+import invigilator
 from invigilator import hooks as hooks_module
 from invigilator import plugin
 
@@ -28,6 +29,21 @@ class PluginFilesTest(unittest.TestCase):
         self.assertTrue(plugin["author"]["name"])
         self.assertEqual(plugin["version"], re.search(r'version = "(.+)"',
                                                       (ROOT / "pyproject.toml").read_text()).group(1))
+        self.assertEqual(plugin["version"], invigilator.__version__)
+
+    def test_agent_plugins_manifest(self):
+        # The Agent Plugins 1.0 manifest that VS Code, Copilot, Cursor and Codex read. Its field
+        # list is closed, and a client rejects a plugin whose manifest breaks the schema.
+        portable, claude = load("plugin.json"), load(".claude-plugin/plugin.json")
+        self.assertEqual(portable["$schema"], "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json")
+        self.assertLessEqual(set(portable), {"$schema", "name", "version", "description", "homepage",
+                                             "repository", "license", "author", "keywords", "extensions"})
+        self.assertLessEqual(set(portable["author"]), {"name", "email", "url"})
+        self.assertRegex(portable["name"], r"^[a-z0-9]([a-z0-9.-]{0,62}[a-z0-9])?$")
+        self.assertNotRegex(portable["name"], r"--|\.\.")
+        for key in ("name", "version", "homepage", "repository", "license", "author"):
+            self.assertEqual(portable[key], claude[key], key)
+        self.assertFalse((ROOT / "mcp.json").exists(), "the plugin starts no MCP server")
 
     def test_marketplace_lists_this_plugin_from_the_repo_root(self):
         market, plugin = load(".claude-plugin/marketplace.json"), load(".claude-plugin/plugin.json")
@@ -91,11 +107,33 @@ class PluginFilesTest(unittest.TestCase):
 
     def test_each_skill_has_a_description(self):
         skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
-        self.assertEqual([path.parent.name for path in skills], ["check", "setup"])
+        self.assertEqual([path.parent.name for path in skills], ["check", "miss-to-check", "review", "setup"])
         for path in skills:
             text = path.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("---\n"), path)
+            self.assertRegex(text.split("---")[1], r"\nname: " + re.escape(path.parent.name) + r"\n", path)
             self.assertRegex(text.split("---")[1], r"\ndescription: \S", path)
+
+    def test_the_reviewer_agent_is_read_only_by_the_default_settings(self):
+        # The review skill starts invigilator:reviewer. The reviewer hook keeps it from writing,
+        # and where hooks don't run, its tool list has no file-writing tool.
+        text = (ROOT / "agents" / "reviewer.md").read_text(encoding="utf-8")
+        front = text.split("---")[1]
+        self.assertRegex(front, r"\nname: reviewer\n")
+        agent = f"{load('.claude-plugin/plugin.json')['name']}:reviewer"
+        self.assertTrue(hooks_module.matches(agent, hooks_module.DEFAULTS["reviewer_agents"]))
+        tools = re.search(r"\ntools: (.+)\n", front).group(1).split(", ")
+        self.assertEqual([t for t in tools if t in ("Edit", "Write", "MultiEdit", "NotebookEdit")], [])
+        self.assertIn(f"`{agent}`", (ROOT / "skills" / "review" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_ci_templates_install_this_release_and_prove_the_checks(self):
+        # The checker comes from a fixed release outside the project, so a change can't edit it.
+        for name in ("github-actions.yml", "azure-pipelines.yml"):
+            text = (ROOT / "ci" / name).read_text(encoding="utf-8")
+            self.assertIn(f'git+https://github.com/zhyuka/invigilator@v{invigilator.__version__}"', text, name)
+            self.assertIn("invigilator check --prove --base", text, name)
+        self.assertIn("ci/pre-push text eol=lf", (ROOT / ".gitattributes").read_text().splitlines())
+        self.assertNotIn(b"\r", (ROOT / "ci" / "pre-push").read_bytes())
 
     def test_shell_scripts_keep_lf_line_endings(self):
         self.assertIn("*.sh text eol=lf", (ROOT / ".gitattributes").read_text().splitlines())

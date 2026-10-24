@@ -187,6 +187,23 @@ class ConfigGuardTest(unittest.TestCase):
         self.assertIsNone(self.answer("Read", {"file_path": str(mine)}))
         self.assertIsNone(self.answer("Write", {"file_path": str(self.user / "settings.json")}))
 
+    def test_writes_to_the_proof_records_ask_and_running_prove_does_not(self):
+        # A record written by hand could make a check that never caught its bad case count.
+        proofs = self.project / ".claude" / "invigilator-proofs.json"
+        proofs.write_text('{"proofs": {}}\n')
+        for tool, tool_input in (("Write", {"file_path": str(proofs)}),
+                                 ("Edit", {"file_path": ".claude/invigilator-proofs.json"}),
+                                 ("Bash", {"command": "echo '{}' > .claude/invigilator-proofs.json"}),
+                                 ("Bash", {"command": "rm .claude/invigilator-proofs.json"})):
+            with self.subTest(tool=tool, tool_input=tool_input):
+                output = self.answer(tool, tool_input)
+                self.assertEqual(decision(output), "ask")
+                self.assertIn("invigilator-proofs.json", output["hookSpecificOutput"]["permissionDecisionReason"])
+        for command in ("python3 -m invigilator prove", "invigilator check --prove",
+                        "cat .claude/invigilator-proofs.json", "git diff .claude/invigilator-proofs.json"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.answer("Bash", {"command": command}))
+
     @unittest.skipIf(os.name == "nt", "the home folder there comes from USERPROFILE, not HOME")
     def test_without_claude_config_dir_the_users_config_is_in_home(self):
         home = self.user.parent

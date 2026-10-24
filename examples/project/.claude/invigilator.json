@@ -1,0 +1,11 @@
+{
+  "checks": [
+    {
+      "name": "no-print",
+      "run": "{python} checks/no_print.py {target}",
+      "target": "src",
+      "bad": "checks/cases/no-print/bad",
+      "good": "checks/cases/no-print/good"
+    }
+  ]
+}

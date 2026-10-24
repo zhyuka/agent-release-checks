@@ -1,0 +1,22 @@
+[
+  {"query": "A debug print got into production last week. Make sure that can't happen again.", "should_trigger": true, "split": "train"},
+  {"query": "QA missed that mean() crashes on an empty cart. Add a check that would have caught it.", "should_trigger": true, "split": "train"},
+  {"query": "We shipped a broken link in the footer. Turn that miss into a check.", "should_trigger": true, "split": "train"},
+  {"query": "The reviewer didn't catch the hardcoded API URL. Add something so it gets caught next time.", "should_trigger": true, "split": "train"},
+  {"query": "This regression slipped through our checks. Write a check for it and prove it works.", "should_trigger": true, "split": "train"},
+  {"query": "Make a check from the bug in issue 42 so it can't come back", "should_trigger": true, "split": "train"},
+  {"query": "Fix mean() so it returns 0 for an empty cart", "should_trigger": false, "split": "train"},
+  {"query": "Run our checks before I merge", "should_trigger": false, "split": "train"},
+  {"query": "Review the fix I just made", "should_trigger": false, "split": "train"},
+  {"query": "Add type hints to src/cart.py", "should_trigger": false, "split": "train"},
+  {"query": "What's the difference between a linter and a test?", "should_trigger": false, "split": "train"},
+  {"query": "Set up invigilator's QA command for this repo", "should_trigger": false, "split": "train"},
+  {"query": "Our tests passed but the date format in the export was wrong. Stop that getting through again.", "should_trigger": true, "split": "test"},
+  {"query": "A TODO comment made it into the release build. Add a guard so it never does again.", "should_trigger": true, "split": "test"},
+  {"query": "The missing alt text on the hero image got past QA. Can you make that a check?", "should_trigger": true, "split": "test"},
+  {"query": "Turn yesterday's escaped defect into a proven check", "should_trigger": true, "split": "test"},
+  {"query": "Add input validation to the signup form", "should_trigger": false, "split": "test"},
+  {"query": "Explain the bug in this stack trace: ZeroDivisionError in mean", "should_trigger": false, "split": "test"},
+  {"query": "Delete the unused checks/ folder", "should_trigger": false, "split": "test"},
+  {"query": "Write a postmortem for last week's outage", "should_trigger": false, "split": "test"}
+]

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs the project's invigilator checks before git pushes. Copy this file to
+# .git/hooks/pre-push and make it executable, or put it in the folder core.hooksPath names.
+# It keeps the checks the remote's default branch has, so a push can't remove one or edit
+# its cases. `git push --no-verify` skips every git hook, this one included; CI on a
+# protected branch is where a check can't be skipped.
+base=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null) || base=origin/main
+exec invigilator check --base "$base"
